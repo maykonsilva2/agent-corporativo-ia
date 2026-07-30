@@ -1,0 +1,39 @@
+# Ambiente virtual / Virtual Environment
+venv/
+.venv/
+
+# Variáveis de ambiente / Environment variables
+.env
+
+# Cache Python / Python cache
+# __pycache__/ -> This is a cache directory
+# *.py[cod] -> This is a bytecode file
+# *.pyo -> This is a optimized bytecode file
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Cache Streamlit / Streamlit cache
+# .streamlit/secrets.toml -> This file contains secrets keys
+.streamlit/secrets.toml
+
+# Arquivos Temporários / Temp Files
+# *.tmp -> This is a temp file
+# *.log -> This is a log file
+# Why we ignore temp files? Because they are not part of the source code
+*.tmp
+*.log
+
+# IDEs
+# .vscode/ -> This is a VSCode config directory
+# .idea/ -> This is a JetBrains IDE config directory
+# Why we ignore IDE files? Because they are not part of the source code
+.vscode/
+.idea/
+
+# Sistema Operacional / Operating System
+# .DS_Store -> This is a macOS system file
+# Thumbs.db -> This is a Windows system file
+# Why we ignore system files? Because they are not part of the source code
+.DS_Store
+Thumbs.db
