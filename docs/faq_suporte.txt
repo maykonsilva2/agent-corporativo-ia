@@ -1,0 +1,144 @@
+=========================================================
+              FAQ - PERGUNTAS FREQUENTES
+            Suporte ao Cliente | Nexolve Tecnologia
+=========================================================
+
+Empresa: Nexolve Tecnologia Ltda.
+CNPJ: 12.345.678/0001-90
+Contato: suporte@nexolve.com.br | +55 (11) 4000-1234
+Horario de atendimento: Seg. a Sex., 9h as 18h (BRT)
+Base de conhecimento: https://ajuda.nexolve.com.br
+
+---------------------------------------------------------
+1. CADASTRO E CONTA
+---------------------------------------------------------
+
+P: Como faco para criar uma conta na Nexolve?
+R: Acesse https://app.nexolve.com.br, clique em "Criar
+conta" e preencha o formulario com nome, e-mail corporativo
+e senha. Voce recebera um codigo de confirmacao por e-mail.
+Apos confirmar, sua conta estara ativa no plano Free por
+14 dias de trial.
+
+P: Preciso de cartao de credito para o periodo de testes?
+R: Nao. O trial de 14 dias do plano Pro nao exige cartao.
+Ao final do periodo, voce escolhe assinar ou continuar no
+plano Free.
+
+P: Como recupero minha senha?
+R: Na tela de login, clique em "Esqueci minha senha",
+informe seu e-mail cadastrado e siga o link enviado. O link
+expira em 1 hora por seguranca.
+
+P: Posso ter varias contas com o mesmo e-mail?
+R: Nao. Cada e-mail corresponde a uma unica conta. Para
+multiplas equipes, use o recurso de "Workspaces" disponivel
+nos planos Pro e Enterprise.
+
+---------------------------------------------------------
+2. PLANOS E COBRANCA
+---------------------------------------------------------
+
+P: Quais sao os planos disponiveis?
+R: Oferecemos tres planos: Free (R$ 0), Pro (R$ 89/usuario/
+mes) e Enterprise (sob consulta, a partir de R$ 4.500/mes).
+Detalhes completos estao no arquivo planos_precos.csv.
+
+P: Posso trocar de plano a qualquer momento?
+R: Sim. O upgrade e imediato com cobranca proporcional. O
+downgrade entra em vigor no ciclo seguinte.
+
+P: Quais formas de pagamento sao aceitas?
+R: Cartao de credito (Visa, Mastercard, Elo, Amex), boleto
+bancario (apenas planos anuais) e PIX. Pagamentos via PIX
+tem processamento em ate 30 minutos.
+
+P: Como funciona o reembolso?
+R: Voce pode solicitar reembolso integral em ate 7 dias
+apos a compra, conforme o Codigo de Defesa do Consumidor,
+desde que nao tenha havido uso intensivo da plataforma
+(mais de 500 requisicoes a API no periodo).
+
+---------------------------------------------------------
+3. SUPORTE TECNICO
+---------------------------------------------------------
+
+P: Quais os canais de suporte?
+R: - Plano Free: apenas base de conhecimento e comunidade.
+  - Plano Pro: chat em ate 4 horas uteis e e-mail.
+  - Plano Enterprise: chat prioritario em ate 30 minutos,
+    telefone dedicado e gerente de conta (CSM).
+
+P: O sistema fica fora do ar. O que faco?
+R: Consulte https://status.nexolve.com.br para verificar
+incidentes em andamento. Se nao houver registro, abra um
+chamado de prioridade alta pelo chat ou pelo e-mail
+urgente@nexolve.com.br.
+
+P: Como reporto um bug?
+R: Envie para bugs@nexolve.com.br com: descricao, passos
+para reproduzir, capturas de tela e o ID da sua conta.
+Bugs validados podem gerar credito proporcional.
+
+P: Onde encontro tutoriais?
+R: Na nossa central de ajuda em https://ajuda.nexolve.com.br
+ha videoaulas, guias em PDF e webinars gravados. Novos
+conteudos sao publicados quinzenalmente.
+
+---------------------------------------------------------
+4. INTEGRACOES E API
+---------------------------------------------------------
+
+P: A Nexolve tem API publica?
+R: Sim. A API REST esta disponivel em todos os planos, com
+limites diferentes: Free (100 req/dia), Pro (10.000 req/dia)
+e Enterprise (1.000.000 req/dia). Documentacao em
+https://docs.nexolve.com.br.
+
+P: Quais integracoes nativas existem?
+R: Integracoes nativas com Slack, Microsoft Teams, Google
+Workspace, Salesforce, HubSpot e Trello. Webhooks
+customizados estao disponiveis no plano Pro ou superior.
+
+P: Posso exportar meus dados?
+R: Sim, a qualquer momento, em formatos CSV, JSON e PDF,
+via painel administrativo. O download e processado em ate
+24 horas para contas acima de 1GB.
+
+---------------------------------------------------------
+5. SEGURANCA E PRIVACIDADE
+---------------------------------------------------------
+
+P: Meus dados estao seguros?
+R: Sim. Usamos criptografia AES-256 em repouso e TLS 1.3
+em transito. Somos certificados ISO 27001 e LGPD. Nenhum
+dado e vendido a terceiros.
+
+P: A Nexolve esta em conformidade com a LGPD?
+R: Sim. Leia nossa Politica de Privacidade para detalhes
+sobre coleta, uso, retencao e direitos do titular.
+
+P: Como solicito a exclusao dos meus dados?
+R: Envie e-mail para dpo@nexolve.com.br com documento de
+identidade. O processo leva ate 15 dias uteis e exclui
+backups em ate 90 dias.
+
+---------------------------------------------------------
+6. CANCELAMENTO
+---------------------------------------------------------
+
+P: Como cancelo minha assinatura?
+R: No painel, acesse Configuracoes > Assinatura >
+Cancelar. O cancelamento evita renovacoes futuras e o
+acesso permanece ativo ate o fim do ciclo pago.
+
+P: Ao cancelar, perco meus dados?
+R: Voce tem 60 dias para exportar seus dados apos o
+cancelamento. Apos esse periodo, os dados sao removidos
+permanentemente conforme nossa politica de retencao.
+
+=========================================================
+         Documento gerado para fins de demonstracao.
+         Nexolve Tecnologia Ltda. - Todos os direitos
+         reservados. Ultima atualizacao: 2026-07-30
+=========================================================

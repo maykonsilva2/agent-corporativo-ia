@@ -1,0 +1,5 @@
+plano,preco_mensal_brl,usuarios_inclusos,armazenamento_gb,limite_api_dia,suporte,integracoes,sla,trial_dias,observacoes
+Free,0,1,2,100,Comunidade,3 integracoes,Nao garantido,0,Ideal para testes e projetos pessoais
+Pro,89,10,50,10000,Chat 4h uteis,15 integracoes,99,5% uptime,14,Mais popular para PMEs
+Business,249,25,250,100000,Chat 2h uteis,30 integracoes,99,9% uptime,14,Para equipes em crescimento
+Enterprise,4500,Ilimitado,2000,1000000,Dedicado 30min,Todas + custom,99,99% uptime,30,Solucao corporativa completa

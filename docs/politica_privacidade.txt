@@ -1,0 +1,198 @@
+=========================================================
+        POLITICA DE PRIVACIDADE - NEXOLVE TECNOLOGIA
+=========================================================
+
+Empresa: Nexolve Tecnologia Ltda.
+CNPJ: 12.345.678/0001-90
+Endereco: Av. Paulista, 1000, Cj. 1420 - Sao Paulo/SP
+E-mail do Encarregado (DPO): dpo@nexolve.com.br
+Ultima atualizacao: 30 de julho de 2026
+Base legal: Lei nº 13.709/2018 (LGPD) e GDPR (Regulamento
+UE 2016/679) quando aplicavel.
+
+---------------------------------------------------------
+1. INTRODUCAO
+---------------------------------------------------------
+A Nexolve Tecnologia Ltda. ("Nexolve", "nos" ou "a
+empresa") valoriza a privacidade dos usuarios. Esta
+Politica de Privacidade descreve como coletamos, usamos,
+armazenamos, compartilhamos e protegemos os dados pessoais
+dos titulares que utilizam a plataforma Nexolve Suite e
+servicos associados.
+
+Ao utilizar nossos servicos, voce concorda com as práticas
+descritas neste documento.
+
+---------------------------------------------------------
+2. DADOS COLETADOS
+---------------------------------------------------------
+Coletamos as seguintes categorias de dados:
+
+  a) Dados de identificacao: nome, CPF/CNPJ, cargo,
+     empresa, e-mail e telefone.
+
+  b) Dados de acesso e uso: endereco IP, tipo de
+     navegador, sistema operacional, paginas visitadas,
+     data e hora de acesso, log de atividades na
+     plataforma.
+
+  c) Dados de pagamento: dados de faturamento. As
+     informacoes de cartao de credito NAO sao armazenadas
+     em nossos servidores; sao processados por nosso
+     provedor de pagamentos certificado PCI-DSS Nivel 1.
+
+  d) Dados de conteudo: informacoes e arquivos que voce
+     carrega voluntariamente na plataforma (documentos,
+     mensagens, configuracoes).
+
+  e) Cookies e tecnologias similares: para autenticacao,
+     preferencias, analise e seguranca.
+
+---------------------------------------------------------
+3. FINALIDADE DO TRATAMENTO
+---------------------------------------------------------
+Os dados sao tratados para as seguintes finalidades:
+
+  - Prestacao e manutencao dos servicos contratados;
+  - Autenticacao, controle de acesso e seguranca;
+  - Cobranca, faturamento e gestao contratual;
+  - Suporte tecnico e atendimento ao cliente;
+  - Melhoria dos produtos, analise de uso e metricas
+    agregadas (sempre anonimizadas);
+  - Cumprimento de obrigacoes legais e regulatorias;
+  - Comunicacao sobre atualizacoes, novidades e
+    oportunidades (com opcao de cancelamento).
+
+---------------------------------------------------------
+4. BASES LEGAIS (LGPD - art. 7º)
+---------------------------------------------------------
+O tratamento ocorre nas seguintes bases legais:
+
+  - Consentimento (art. 7º, I): para comunicacoes de
+    marketing e dados opcionais;
+  - Execucao de contrato (art. 7º, V): para prestacao dos
+    servicos;
+  - Cumprimento de obrigacao legal (art. 7º, II): para
+    exigencias fiscais, contabeis e regulatorias;
+  - Legitimo interesse (art. 7º, IX): para seguranca,
+    prevencao a fraudes e melhorias do servico.
+
+---------------------------------------------------------
+5. COMPARTILHAMENTO DE DADOS
+---------------------------------------------------------
+A Nexolve NAO vende nem aluga dados pessoais. Podemos
+compartilhar dados, estritamente necessario, com:
+
+  a) Provedores de servicos: hospedagem (AWS), pagamentos
+     (Stripe/Pagar.me), e-mail transacional (SendGrid),
+     analise (Google Analytics), sob contratos com clausulas
+     de confidencialidade e protecao de dados.
+
+  b) Autoridades publicas: quando exigido por lei, ordem
+     judicial ou requisicao de autoridade competente.
+
+  c) Fusoes e aquisicoes: em caso de reorganizacao
+     societaria, com comunicacao previa aos titulares.
+
+---------------------------------------------------------
+6. TRANSFERENCIA INTERNACIONAL DE DADOS
+---------------------------------------------------------
+Alguns provedores processam dados fora do Brasil (EUA,
+Uniao Europeia). Nessas situacoes, utilizamos clausulas
+contratuais padrao (SCC) aprovadas pelo ANPD e garantimos
+nivel adequado de protecao conforme o art. 33 da LGPD.
+
+---------------------------------------------------------
+7. SEGURANCA DA INFORMACAO
+---------------------------------------------------------
+Adotamos medidas tecnicas e organizacionais:
+
+  - Criptografia AES-256 em repouso e TLS 1.3 em transito;
+  - Autenticacao multi-fator (MFA) disponivel;
+  - Backups criptografados com retencao de 30 dias;
+  - Monitoramento 24/7 e resposta a incidentes;
+  - Certificacoes: ISO/IEC 27001 e SOC 2 Tipo II;
+  - Treinamento obrigatorio de seguranca para colaboradores;
+  - Testes de penetracao anuais por terceiros independentes.
+
+---------------------------------------------------------
+8. RETENCAO DE DADOS
+---------------------------------------------------------
+  - Contas ativas: enquanto durar o contrato;
+  - Contas canceladas: 60 dias para exportacao, remocao
+    definitiva apos 90 dias;
+  - Logs de seguranca: ate 12 meses;
+  - Dados fiscais/contabeis: 5 anos (exigencia legal);
+  - Backups: 30 dias apos a remocao no sistema principal.
+
+---------------------------------------------------------
+9. DIREITOS DO TITULAR (LGPD - art. 18)
+---------------------------------------------------------
+Voce pode exercer, gratuitamente, os seguintes direitos:
+
+  - Confirmacao da existencia de tratamento;
+  - Acesso aos dados;
+  - Correcao de dados incompletos, inexatos ou
+    desatualizados;
+  - Anonimizacao, bloqueio ou eliminacao de dados
+    desnecessarios ou excessivos;
+  - Portabilidade dos dados a outro fornecedor;
+  - Eliminacao dos dados pessoais tratados com
+    consentimento;
+  - Informacao sobre compartilhamento;
+  - Revogacao do consentimento.
+
+Solicitacoes devem ser enviadas para dpo@nexolve.com.br.
+Responderemos em ate 15 dias uteis (prazo maximo da LGPD).
+
+---------------------------------------------------------
+10. COOKIES
+---------------------------------------------------------
+Utilizamos cookies essenciais (funcionamento, seguranca) e
+opcionais (analise, marketing). Voce gerencia suas
+preferencias no banner de consentimento ou nas
+configuracoes do navegador. Cookies essenciais nao podem
+ser desativados.
+
+---------------------------------------------------------
+11. CRIANCAS E ADOLESCENTES
+---------------------------------------------------------
+A plataforma Nexolve Suite nao e direcionada a menores de
+18 anos. nao coletamos conscientemente dados de menores.
+Se identificar tal coleta, removeremos os dados
+prontamente.
+
+---------------------------------------------------------
+12. ALTERACOES DESTA POLITICA
+---------------------------------------------------------
+Podemos atualizar esta Politica periodicamente.
+Notificaremos mudancas significativas por e-mail e/ou
+aviso na plataforma com 30 dias de antecedencia. A data de
+"ultima atualizacao" no topo reflete a versao vigente.
+
+---------------------------------------------------------
+13. CONTATO DO ENCARREGADO (DPO)
+---------------------------------------------------------
+Para qualquer questao relacionada a privacidade:
+
+  Encarregado pelo Tratamento de Dados Pessoais (DPO)
+  E-mail: dpo@nexolve.com.br
+  Telefone: +55 (11) 4000-1234
+  Endereco: Av. Paulista, 1000, Cj. 1420 - Sao Paulo/SP
+  CEP: 01310-100
+
+---------------------------------------------------------
+14. AUTORIDADE DE PROTECAO DE DADOS
+---------------------------------------------------------
+Se entender que seus direitos foram violados, voce pode
+apresentar reclamacao a:
+  ANPD - Autoridade Nacional de Protecao de Dados
+  Site: https://www.gov.br/anpd
+  E-mail: encaminhamento@anpd.gov.br
+
+=========================================================
+  Documento de demonstracao. Empresa ficticia.
+  Nexolve Tecnologia Ltda. (CNPJ 12.345.678/0001-90)
+  Todos os dados sao ficticios para fins de teste do
+  sistema. Nenhum dado real e tratado.
+=========================================================
