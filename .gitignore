@@ -37,3 +37,9 @@ __pycache__/
 # Why we ignore system files? Because they are not part of the source code
 .DS_Store
 Thumbs.db
+
+# Documentation guide
+guia_repositorio_agente_corporativo.md
+
+# Config to fix Python Interpreter not work in Antigravity IDE
+.vscode
