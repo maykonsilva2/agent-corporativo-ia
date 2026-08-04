@@ -20,7 +20,9 @@ from langchain.agents import create_agent
 load_dotenv()
 
 # ==========================================
-# Streamlit PAGE CONFIGURATION (must be the first Streamlit command)
+# 0. Streamlit PAGE CONFIGURATION (must be the first Streamlit command)
+# This command configures how the browser tab displays your application and sets global layout rules.
+# It does not render content inside the web page body itself.
 # ==========================================
 
 st.set_page_config(
@@ -34,7 +36,7 @@ st.set_page_config(
 set_llm_cache(InMemoryCache()) # It is used to cache the responses of the LLMs(in this case, the responses of the LLMs in the memory)
 
 # ==========================================
-# LLM Configuration with Fallback
+# 1. LLM Configuration with Fallback
 # LLM: Assembles a list of available models in order of priority.
 # The first becomes the primary model; the rest become automatic fallbacks.
 
@@ -124,5 +126,129 @@ else:
 
 
 # ==========================================
-# STREAMLIT INTERFACE
+# 2. STREAMLIT INTERFACE
+# This block renders actual visual elements and interactive widgets inside the body of the web page that users see and interact with.
+# ==========================================
+
+st.title("🤖 Agente Corporativo IA")
+
+# st.write("Faça o upload de um documento (.pdf, .txt, .csv ou .docx) e converse com ele.")
+# Replace st.write with st.info.
+st.info("""
+**ℹ️ Como usar esta ferramenta:**
+
+1. **Upload:** Carregue um documento da empresa nos formatos `.pdf`, `.txt`, `.csv` ou `.docx` no botão abaixo.
+2. **Processamento:** Aguarde alguns segundos enquanto a IA lê e indexa o conteúdo do arquivo.
+3. **Conversa:** Faça perguntas sobre o documento no campo de chat. 
+
+**Regras do Agente:**
+- As respostas serão baseadas **exclusivamente** no documento enviado.
+- Sempre citará a fonte da informação (página ou linha).
+- Se a informação não existir no documento, a IA informará que não foi encontrada (não há invenção de respostas).
+""")
+
+# This widget is used here in code because first we need a place where the user can upload a document. If there is no such place, the user will not be able to upload a document.
+uploaded_file = st.file_uploader("Escolha um arquivo", type=['pdf', 'txt', 'csv', 'docx'])
+
+# Initialize the Vector Database memory
+# "If this is the very first time the app is loading, create an empty slot called vector_db and set it to None."
+# This is necessary why: The Streamlit Rule: Every time a user interacts with a widget (clicks a button, types a chat message, uploads a file)
+# Streamlit re-runs your entire Python script from top to bottom.
+# When the user uploads a file, the app processes it and store the result here. When the user types a chat message 5 seconds later, Streamlit reruns the scrips. Because of this `if` statement, it doensn't overwite `vector_db` back to `None`. It keeps the processed PDf in memory.
+
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = None
+
+
+# Initialize the Chat History memory
+# "If this is the very first time the app is loading, create an empty slot called vector_db and set it to None."
+# Why it's crucial: This stores the conversation history [{role: "user", content: "hi"}, {role: "assistant", content: "hello!"}]. Without this, every time the user sends a new message, the previous messages would disappear from the screen, and the LLM would forget what was just said.
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+
+# What it means: "If this is the first time the app is loading, create a slot called last_file_name and set it to None."
+# Why it's crucial: Look at block in your code:
+
+# if uploaded_file.name != st.session_state.last_file_name:
+#    st.session_state.vector_db = None
+#    st.session_state.messages = []
+#    st.session_state.last_file_name = uploaded_file.name
+
+#This checks if the user uploaded a new file. If they did, it resets the vectors and clears the chat history, because the old chat no longer makes sense with the new document. Without storing last_file_name, the app wouldn't know whether it's dealing with the same file or a new one.
+
+if "last_file_name" not in st.session_state:
+    st.session_state.last_file_name = None
+
+# ==========================================
+# 3. DOCUMENT PROCESSING (RAG)
+# Question about the difference:
+# Use `!=` to compare Values(Strings, Numbers, Lists, Dicts).
+# Use `is not` to compare Objects in Memory(None, True, False)
+# Best Practice in Python (PEP 8 standard), you should always use `is` or `is not` when checking against `None`. It is faster and avoids unexpected behavior.
+# ==========================================
+
+# When the page loads, the st.file_uploader is empty (value is None). This line checks if the user has actually selected a file. If they haven't, the code skips this entire block. If they have, it enters the block.
+if uploaded_file is not None:
+    # Reset when loading a new  file
+    if uploaded_file.name != st.session_state.last_file_name:
+        st.session_state.vector_db = None # Clears old document memory
+        st.session_state.messages = [] # Clears old chat history
+        st.session_state.last_file_name = uploaded_file.name # Rememberes the new file
+
+    # If the database is None, it means the file hasn't been processed yet. If the database already exists (because the user just sent a chat message, causing a rerun), the code skips the block completely, saving time and API costs.
+    
+    if st.session_state.vector_db is None:
+        # Extract the File Extension
+        # What it does: Splits the file name by . and extracts the last part (e.g., "report.pdf" -> "pdf"), converting it to lowercase.
+
+        # Question dubt: In Python, [-1] is used to select the last element of a list.When a filename is split by a period using .split('.'), it creates a list of all the parts of the name. Since the file extension always comes after the final period, accessing the index [-1] guarantees you get the actual extension, even if the file name contains multiple periods (e.g., document.backup.v2.pdf).
+
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+
+        # Create a Temporary Disk File
+        # Streamlit keeps uploaded files in RAM (`BytesIO` buffer). However, standard file loaders (like `PyPDFLoader`) require an actual physical file path on your hard drive.
+        # `delete=False`: Stops Python from automatically deleting the temporary file the moment the with block closes, allowing LangChain to open and read it.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as tmp:
+            tmp.write(uploaded_file.getvalue()) # This line writes the actual contents of the file into the temporary file.
+            tmp_path = tmp.name # This line assigns the file path of the temporary file to the variable 'tmp_pth'.
+
+        
+        with st.spinner("Processando o documento..."):
+            # Load and Parse the File
+            # Fallback:  Any other extension defaults to TextLoader
+            # Easy to Extend: Adding support for a new file type (like JSON or Markdown) just requires adding one key-value pair to the loaders dictionary.
+            try:
+                loaders = {'pdf': PyPDFLoader, 'csv': CSVLoader, 'docx': Docx2txtLoader}
+
+                # Is actually doing two steps in one
+                # Finding the Class (The Lookup)
+
+                # `loaders.get(extensao, TextLoader)` -> It gets the loader class: If extensao is 'pdf', it evaluates to the class `PyPDFLoader`.
+                #  It falls back to a default: .get(key, default) returns TextLoader as a safe fallback if extensao isn't in the dictionary (e.g., for .txt, .py, or .md files).
+
+                # Instantiating the Class (The (tmp_path) Part) -> Once the dictionary resolves to a class (e.g., PyPDFLoader), Python replaces that part of the code and executes it like this: 
+                # If extensao == 'pdf':
+                # loader = PyPDFLoader(tmp_path)
+
+                # If extensao is unknown (e.g., 'txt'):
+                # loader = TextLoader(tmp_path)
+                loader = loaders.get(file_extension, TextLoader)(tmp_path)
+                docs = loader.load()
+
+                chunks = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200).split_documents(docs)
+
+                # It converts those chunks into mathematical vectors (using the embeddings model you configured earlier) and stores them in FAISS (a fast vector database).
+                # It saves the FAISS database into st.session_state so it survives future Streamlit reruns.
+                st.session_state.vector_db = FAISS.from_documents(chunks, embeddings)
+                st.success(f"✅ Documento '{uploaded_file.name}' processado! {len(chunks)} trechos indexados. ")
+            except Exception as e:
+                st.error(f"Erro ao processar: {e}")
+            finally:
+                # Run to delete the temporary file from your disk after processing finishes, preventing temporary file memory leaks on your machine.
+                os.remove(tmp_path)
+
+# ==========================================
+# 4. AGENT TOOL (RAG Search)
 # ==========================================
