@@ -4,7 +4,7 @@ import streamlit as st
 from dotenv import load_dotenv # Used to load environment variables from .env file (in this case, the API key for the LLMs)
 from pydantic import SecretStr # Used to hide sensitive information (in this case, the API key for the LLMs)
 
-from langchain_core.tools import tool
+from langchain_core.tools import retriever, tool
 from langchain_core.caches import InMemoryCache # Used to cache the responses of the LLMs(in this case, the responses of the LLMs in the memory)
 from langchain_core.globals import set_llm_cache # Used to set the cache for the LLMs(in this case, the cache for the responses of the LLMs)
 
@@ -252,3 +252,52 @@ if uploaded_file is not None:
 # ==========================================
 # 4. AGENT TOOL (RAG Search)
 # ==========================================
+
+@tool
+def buscar_no_documento(pergunta:str) -> str:
+    """Searches the uploaded document to answer the user's question. Always cite the source."""
+    if st.session_state.vector_db is None:
+        return "Nenhum documento foi carregado ainda."
+
+    # `st.session_state.vector_db`
+    # This is your FAISS Vector Store stored in Streamlit's session memory. 
+    # It holds all the text chunks from the file you uploaded, converted into mathematical numbers (embeddings) so Python can understand their meaning.
+
+    # `.as_retriever(...)`
+    # A Vector Store is just a database that holds information. The .as_retriever() method converts that raw database into a searchable tool that LangChain can plug directly into your AI workflow.
+
+    # search_kwargs={"k": 3}
+    # search_kwargs stands for "search keyword arguments"
+    # If k=1: It returns only the top 1 most similar text chunk. (Fast, but might miss context).
+    #If k=3: It returns the top 3 most similar text chunks. (This is the sweet spot—it gives the LLM enough context to answer accurately without being too expensive).
+    #If k=10: It returns 10 chunks (might overwhelm the AI with too much irrelevant text).
+
+    retriever = st.session_state.vector_db.as_retriever(search_kwargs={"k": 3})
+
+    docs_encontrados = retriever.invoke(pergunta)
+
+    if not docs_encontrados:
+        return "Nenhuma informação encontrada no documento para esta pergunta."
+    
+    resultado = ""
+
+    # Cite the source
+    # REMEMBER: `enumerate()` allows you to loop over a list(or any iterable) and get both the item itself AND its position(index) at the same time
+    # The start parameter -> `enumerate(..., start=1)` tells Python to start counting from 1 instead of the default 0.
+
+    # What is doc.metadata -> In LangChain, every chunk of text loaded from a PDF, CSV, or TXT has two main parts:
+    #  1. doc.page_content: The actual text
+    #  2. doc.metadata: A Python dictionary containing info about where the text came from.
+    # doc.metadata: A Python dictionary containing info about where the text came from.
+
+    # Why the second parameter? (The .get() method)
+    # In Python, if you try to get a key from a dictionary that doesn't exist, the code crashes immediately with a KeyError.
+    # To prevent this, we use the dictionary .get('key', 'default_value'). If it doesn't find the key, it returns the 'default_value' you provided instead of crashing.
+    
+    for i, doc in enumerate(docs_encontrados):
+        fonte = doc.metadata.get('source', 'documento desconhecido') # Try to get 'source', if fails, return 'documento'
+        pagina = doc.metadata.get('page', doc.metadata.get('row','N/A')) # Try to get 'page', if fails, try 'row', if fails, return 'N/A'
+        
+        resultado += f"\n[FONTE {i+1}: {fonte} - Página/Linha {pagina}\n{doc.page_content}\n"
+
+    return resultado
