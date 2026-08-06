@@ -1,5 +1,6 @@
 import os
 import tempfile # Used to create temporary files (In this case, the temporary files for the Large Language Models (LLMs) to process.)
+from pydantic.v1 import tools
 import streamlit as st
 from dotenv import load_dotenv # Used to load environment variables from .env file (in this case, the API key for the LLMs)
 from pydantic import SecretStr # Used to hide sensitive information (in this case, the API key for the LLMs)
@@ -301,3 +302,65 @@ def buscar_no_documento(pergunta:str) -> str:
         resultado += f"\n[FONTE {i+1}: {fonte} - Página/Linha {pagina}\n{doc.page_content}\n"
 
     return resultado
+
+    # Doubt How Work the citation FONTE:
+
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 1. User asks a question                                          │
+    # └─────────────────────────────────────────────────────────────────┘
+    # ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 2. LLM reads the system_prompt → sees rule "use the tool"        │
+    # │    (system_prompt in action)                                     │
+    # └─────────────────────────────────────────────────────────────────┘
+    # ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 3. LLM decides to CALL the `buscar_no_documento` tool            │
+    # └─────────────────────────────────────────────────────────────────┘
+    # ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 4. The TOOL (Python code) RUNS on the server:                    │
+    # │    - Retrieves documents from FAISS                              │
+    # │    - Reads doc.metadata.get('source')   ← FILE NAME              │
+    # │    - Reads doc.metadata.get('page')     ← PAGE NUMBER            │
+    # │    - Assembles the string: [SOURCE 1: file.pdf — Page 2]          │
+    # │    - Returns all this to the LLM                                 │
+    # └─────────────────────────────────────────────────────────────────┘
+    # ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 5. LLM receives the returned text (with the [SOURCE N] tags)     │
+    # └─────────────────────────────────────────────────────────────────┘
+    # ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 6. LLM reads the system_prompt again → sees rule "4 .cite the source"│
+    # │    (system_prompt in action again)                               │
+    # └─────────────────────────────────────────────────────────────────┘
+    # ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 7. LLM writes the final answer INCLUDING the source citation     │
+    # └─────────────────────────────────────────────────────────────────┘
+
+
+# =========================================================
+# 5. LEAD AGENT (LangGraph)
+# =========================================================
+
+system_prompt = """Você é um assistente corporativo especializado em análise de documentos internos.
+Responda SEMPRE em Português do Brasil (pt-BR).
+
+REGRAS OBRIGATÓRIAS:
+1. Use a ferramenta `buscar_no_documento` para TODA pergunta do usuário.
+2. Baseie sua resposta APENAS nos trechos retornados pela ferramenta.
+3. Se não encontrar a informação, responda: "A informação solicitada não consta no documento fornecido."
+4. Cite SEMPRE a fonte ao final da resposta. Exemplo: "Fonte: Página 2 do documento."
+5. Jamais invente informações.
+"""
+
+# Deprecated
+#  agente = create_react_agent(model=llm, tools=[buscar_no_documento], prompt=system_prompt)
+tools=[buscar_no_documento]
+agente = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
+
+# ==========================================
+# 6. CHAT INTERFACE WITH HISTORY
+# ==========================================
