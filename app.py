@@ -133,7 +133,7 @@ elif gemini_key:
     # Google text-embedding-004 — free tier, ideal for Streamlit Cloud
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/text-embedding-004",
-        google_api_key=SecretStr(gemini_key)
+        api_key=SecretStr(gemini_key)
     )
 else:
     # Fully offline fallback — no API key or billing required.
