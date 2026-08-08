@@ -116,30 +116,28 @@ llm = available_models[0]
 if len(available_models) > 1:
     llm = llm.with_fallbacks(available_models[1:])
 
+# ==========================================
+# SESSION STATE — Initialize early, before any cache or widget runs.
+# This guarantees these keys always exist regardless of execution order.
+# ==========================================
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "last_file_name" not in st.session_state:
+    st.session_state.last_file_name = None
 
 # ==========================================
-# EMBEDDINGS — Priority chain (first available wins):
-#   1. OpenAI          → best quality, requires paid OPENAI_API_KEY
-#   2. Google Gemini   → free generous quota, uses your existing GEMINI_API_KEY ✅
-#   3. HuggingFace     → fully offline fallback, no key needed (~90 MB download on 1st run)
-# For Streamlit Cloud: configure GEMINI_API_KEY in the Secrets panel → free embeddings.
+# EMBEDDINGS — HuggingFace local (free, no API key required)
+# @st.cache_resource ensures the model is loaded only ONCE per server session,
+# not on every Streamlit rerun. Works locally and on Streamlit Cloud.
+# First run downloads ~90 MB; subsequent runs use the cached model.
 # ==========================================
-openai_key  = get_secret("OPENAI_API_KEY")
-gemini_key  = get_secret("GEMINI_API_KEY")
+@st.cache_resource(show_spinner="⏳ Carregando modelo de embeddings (só na primeira vez)...")
+def load_embeddings():
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-if openai_key:
-    embeddings = OpenAIEmbeddings(api_key=SecretStr(openai_key))
-elif gemini_key:
-    # Google text-embedding-004 — free tier, ideal for Streamlit Cloud
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        api_key=SecretStr(gemini_key)
-    )
-else:
-    # Fully offline fallback — no API key or billing required.
-    # First run downloads the model (~90 MB); subsequent runs use the local cache.
-    st.sidebar.info("ℹ️ Nenhuma chave de embedding configurada — usando embeddings locais gratuitos (HuggingFace: all-MiniLM-L6-v2).")
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+embeddings = load_embeddings()
 
 
 # ==========================================
@@ -167,36 +165,9 @@ st.info("""
 # This widget is used here in code because first we need a place where the user can upload a document. If there is no such place, the user will not be able to upload a document.
 uploaded_file = st.file_uploader("Escolha um arquivo", type=['pdf', 'txt', 'csv', 'docx'])
 
-# Initialize the Vector Database memory
-# "If this is the very first time the app is loading, create an empty slot called vector_db and set it to None."
-# This is necessary why: The Streamlit Rule: Every time a user interacts with a widget (clicks a button, types a chat message, uploads a file)
-# Streamlit re-runs your entire Python script from top to bottom.
-# When the user uploads a file, the app processes it and store the result here. When the user types a chat message 5 seconds later, Streamlit reruns the scrips. Because of this `if` statement, it doensn't overwite `vector_db` back to `None`. It keeps the processed PDf in memory.
+# (Session state already initialized above, before embeddings load)
 
-if "vector_db" not in st.session_state:
-    st.session_state.vector_db = None
-
-
-# Initialize the Chat History memory
-# "If this is the very first time the app is loading, create an empty slot called vector_db and set it to None."
-# Why it's crucial: This stores the conversation history [{role: "user", content: "hi"}, {role: "assistant", content: "hello!"}]. Without this, every time the user sends a new message, the previous messages would disappear from the screen, and the LLM would forget what was just said.
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-
-# What it means: "If this is the first time the app is loading, create a slot called last_file_name and set it to None."
-# Why it's crucial: Look at block in your code:
-
-# if uploaded_file.name != st.session_state.last_file_name:
-#    st.session_state.vector_db = None
-#    st.session_state.messages = []
-#    st.session_state.last_file_name = uploaded_file.name
-
-#This checks if the user uploaded a new file. If they did, it resets the vectors and clears the chat history, because the old chat no longer makes sense with the new document. Without storing last_file_name, the app wouldn't know whether it's dealing with the same file or a new one.
-
-if "last_file_name" not in st.session_state:
-    st.session_state.last_file_name = None
+# (last_file_name already initialized above)
 
 # ==========================================
 # 3. DOCUMENT PROCESSING (RAG)
@@ -273,7 +244,9 @@ if uploaded_file is not None:
 @tool
 def buscar_no_documento(pergunta:str) -> str:
     """Searches the uploaded document to answer the user's question. Always cite the source."""
-    if st.session_state.vector_db is None:
+    # Use .get() for safe access — avoids AttributeError if session state key is missing
+    vector_db = st.session_state.get("vector_db", None)
+    if vector_db is None:
         return "Nenhum documento foi carregado ainda."
 
     # `st.session_state.vector_db`
@@ -289,7 +262,7 @@ def buscar_no_documento(pergunta:str) -> str:
     #If k=3: It returns the top 3 most similar text chunks. (This is the sweet spot—it gives the LLM enough context to answer accurately without being too expensive).
     #If k=10: It returns 10 chunks (might overwhelm the AI with too much irrelevant text).
 
-    retriever = st.session_state.vector_db.as_retriever(search_kwargs={"k": 3})
+    retriever = vector_db.as_retriever(search_kwargs={"k": 3})
 
     docs_encontrados = retriever.invoke(pergunta)
 
