@@ -238,63 +238,13 @@ if uploaded_file is not None:
                 os.remove(tmp_path)
 
 # ==========================================
-# 4. AGENT TOOL (RAG Search)
+# 4. AGENT TOOL (RAG Search) + 5. LEAD AGENT + 6. CHAT INTERFACE
+# NOTE: The tool, agent, and chat interface are all defined together inside
+# this block. This is intentional — the @tool function captures `_vector_db`
+# as a closure variable, avoiding the need to access st.session_state at
+# tool-execution time (which fails when LangGraph runs the tool in a
+# different thread context).
 # ==========================================
-
-@tool
-def buscar_no_documento(pergunta:str) -> str:
-    """Searches the uploaded document to answer the user's question. Always cite the source."""
-    # Use .get() for safe access — avoids AttributeError if session state key is missing
-    vector_db = st.session_state.get("vector_db", None)
-    if vector_db is None:
-        return "Nenhum documento foi carregado ainda."
-
-    # `st.session_state.vector_db`
-    # This is your FAISS Vector Store stored in Streamlit's session memory. 
-    # It holds all the text chunks from the file you uploaded, converted into mathematical numbers (embeddings) so Python can understand their meaning.
-
-    # `.as_retriever(...)`
-    # A Vector Store is just a database that holds information. The .as_retriever() method converts that raw database into a searchable tool that LangChain can plug directly into your AI workflow.
-
-    # search_kwargs={"k": 3}
-    # search_kwargs stands for "search keyword arguments"
-    # If k=1: It returns only the top 1 most similar text chunk. (Fast, but might miss context).
-    #If k=3: It returns the top 3 most similar text chunks. (This is the sweet spot—it gives the LLM enough context to answer accurately without being too expensive).
-    #If k=10: It returns 10 chunks (might overwhelm the AI with too much irrelevant text).
-
-    retriever = vector_db.as_retriever(search_kwargs={"k": 3})
-
-    docs_encontrados = retriever.invoke(pergunta)
-
-    if not docs_encontrados:
-        return "Nenhuma informação encontrada no documento para esta pergunta."
-    
-    resultado = ""
-
-    # Cite the source
-    # REMEMBER: `enumerate()` allows you to loop over a list(or any iterable) and get both the item itself AND its position(index) at the same time
-    # The start parameter -> `enumerate(..., start=1)` tells Python to start counting from 1 instead of the default 0.
-
-    # What is doc.metadata -> In LangChain, every chunk of text loaded from a PDF, CSV, or TXT has two main parts:
-    #  1. doc.page_content: The actual text
-    #  2. doc.metadata: A Python dictionary containing info about where the text came from.
-    # doc.metadata: A Python dictionary containing info about where the text came from.
-
-    # Why the second parameter? (The .get() method)
-    # In Python, if you try to get a key from a dictionary that doesn't exist, the code crashes immediately with a KeyError.
-    # To prevent this, we use the dictionary .get('key', 'default_value'). If it doesn't find the key, it returns the 'default_value' you provided instead of crashing.
-    
-    for i, doc in enumerate(docs_encontrados):
-        fonte = doc.metadata.get('source', 'documento desconhecido') # Try to get 'source', if fails, return 'documento'
-        pagina = doc.metadata.get('page', doc.metadata.get('row','N/A')) # Try to get 'page', if fails, try 'row', if fails, return 'N/A'
-        
-        resultado += f"\n[FONTE {i+1}: {fonte} - Página/Linha {pagina}\n{doc.page_content}\n"
-
-    return resultado
-
-# =========================================================
-# 5. LEAD AGENT (LangGraph)
-# =========================================================
 
 system_prompt = """Você é um assistente corporativo especializado em análise de documentos internos.
 Responda SEMPRE em Português do Brasil (pt-BR).
@@ -307,63 +257,103 @@ REGRAS OBRIGATÓRIAS:
 5. Jamais invente informações.
 """
 
-# Deprecated
-#  agente = create_react_agent(model=llm, tools=[buscar_no_documento], prompt=system_prompt)
-tools=[buscar_no_documento]
-agente = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
-
-# Doubt How Work the citation FONTE:
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ 1. User asks a question                                         │
-# └─────────────────────────────────────────────────────────────────┘
-#                               ↓
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ 2. LLM reads the system_prompt → sees rule "use the tool"       │
-# │    (system_prompt in action)                                    │
-# └─────────────────────────────────────────────────────────────────┘
-#                              ↓
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ 3. LLM decides to CALL the `buscar_no_documento` tool           │
-# └─────────────────────────────────────────────────────────────────┘
-#                              ↓
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ 4. The TOOL (Python code) RUNS on the server:                   │
-# │    - Retrieves documents from FAISS                             │
-# │    - Reads doc.metadata.get('source')   ← FILE NAME             │
-# │    - Reads doc.metadata.get('page')     ← PAGE NUMBER           │
-# │    - Assembles the string: [SOURCE 1: file.pdf — Page 2]        │
-# │    - Returns all this to the LLM                                │
-# └─────────────────────────────────────────────────────────────────┘
-#                              ↓
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ 5. LLM receives the returned text (with the [SOURCE N] tags)    │
-# └─────────────────────────────────────────────────────────────────┘
-#                              ↓
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ 6. LLM reads the system_prompt again → sees rule "4 .cite the source"│
-# │    (system_prompt in action again)                              │
-# └─────────────────────────────────────────────────────────────────┘
-#                              ↓
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ 7. LLM writes the final answer INCLUDING the source citation    │
-# └─────────────────────────────────────────────────────────────────┘
-
-# ==========================================
-# 6. CHAT INTERFACE WITH HISTORY
-# ==========================================
-
 if st.session_state.vector_db is not None:
-    st.divider() # The st.divider() function draws a horizontal line across the page
-    st.subheader("💬 Converse com o documento") # The st.subheader() function displays a sub-header
+
+    # ─────────────────────────────────────────────────────────────────
+    # Capture vector_db as a local variable (closure).
+    # The @tool function below closes over `_vector_db`, so it works
+    # even when LangGraph/LangChain runs the tool in a different thread
+    # where st.session_state would not be accessible.
+    # ─────────────────────────────────────────────────────────────────
+    _vector_db = st.session_state.vector_db
+
+    @tool
+    def buscar_no_documento(pergunta: str) -> str:
+        """Searches the uploaded document to answer the user's question. Always cite the source."""
+
+        # `.as_retriever(...)`
+        # Converts the FAISS vector store into a searchable retriever that
+        # LangChain can plug directly into the agent workflow.
+
+        # search_kwargs={"k": 3}
+        # k=1 → only top-1 chunk (fast, but might miss context)
+        # k=3 → top-3 chunks (sweet spot: enough context, not too noisy)
+        # k=10 → too many chunks (overwhelms the LLM with irrelevant text)
+        retriever = _vector_db.as_retriever(search_kwargs={"k": 3})
+
+        docs_encontrados = retriever.invoke(pergunta)
+
+        if not docs_encontrados:
+            return "Nenhuma informação encontrada no documento para esta pergunta."
+
+        resultado = ""
+
+        # enumerate(..., start=1) → gives index starting at 1 (not 0)
+        # doc.metadata → dict with info about the chunk source:
+        #   'source' → file name/path
+        #   'page'   → page number (PDFs)
+        #   'row'    → row number (CSVs)
+        for i, doc in enumerate(docs_encontrados, start=1):
+            fonte  = doc.metadata.get('source', 'documento desconhecido')
+            pagina = doc.metadata.get('page', doc.metadata.get('row', 'N/A'))
+            resultado += f"\n[FONTE {i}: {fonte} — Página/Linha {pagina}]\n{doc.page_content}\n"
+
+        return resultado
+
+    # Doubt — How the citation flow works:
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 1. User asks a question                                         │
+    # └─────────────────────────────────────────────────────────────────┘
+    #                               ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 2. LLM reads the system_prompt → sees rule "use the tool"       │
+    # │    (system_prompt in action)                                    │
+    # └─────────────────────────────────────────────────────────────────┘
+    #                              ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 3. LLM decides to CALL the `buscar_no_documento` tool           │
+    # └─────────────────────────────────────────────────────────────────┘
+    #                              ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 4. The TOOL (Python code) RUNS on the server:                   │
+    # │    - Retrieves documents from FAISS via _vector_db (closure)    │
+    # │    - Reads doc.metadata.get('source')   ← FILE NAME             │
+    # │    - Reads doc.metadata.get('page')     ← PAGE NUMBER           │
+    # │    - Assembles the string: [FONTE 1: file.pdf — Página 2]       │
+    # │    - Returns all this to the LLM                                │
+    # └─────────────────────────────────────────────────────────────────┘
+    #                              ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 5. LLM receives the returned text (with the [FONTE N] tags)     │
+    # └─────────────────────────────────────────────────────────────────┘
+    #                              ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 6. LLM reads system_prompt again → sees rule 4 "cite the source"│
+    # └─────────────────────────────────────────────────────────────────┘
+    #                              ↓
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ 7. LLM writes the final answer INCLUDING the source citation    │
+    # └─────────────────────────────────────────────────────────────────┘
+
+    agente = create_agent(model=llm, tools=[buscar_no_documento], system_prompt=system_prompt)
+
+    # ==========================================
+    # 6. CHAT INTERFACE WITH HISTORY
+    # ==========================================
+
+    st.divider() # draws a horizontal line across the page
+    st.subheader("💬 Converse com o documento")
 
     # Show the entire conversation history
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]): # The st.chat_message() function displays a chat message
-            st.markdown(msg["content"]) # The st.markdown() function displays markdown formatted text
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    # The `:=` operator assigns the value returned by st.chat_input() to the variable and also checks if it has a value (i.e., if it's not empty). If it does, the code inside the if block is executed.
+    # The `:=` operator assigns the value returned by st.chat_input() to the
+    # variable AND checks if it has a value (not empty). If it does, the code
+    # inside the if block is executed.
     if pergunta := st.chat_input("Faça uma pergunta sobre o documento..."):
-        st.session_state.messages.append({"role": "user", "content": pergunta}) # `append()` adds the user's message to the session state
+        st.session_state.messages.append({"role": "user", "content": pergunta})
 
         # Display the user's message immediately, without waiting for the agent to respond
         with st.chat_message("user"):
@@ -373,12 +363,13 @@ if st.session_state.vector_db is not None:
             with st.spinner("Analisando..."):
                 try:
                     resposta = agente.invoke({"messages": st.session_state.messages})
-                    
-                    resposta_final = resposta['messages'][-1].content # The `[-1]` operator accesses the last element of the list
+
+                    # [-1] accesses the last message (the agent's final answer)
+                    resposta_final = resposta['messages'][-1].content
 
                     st.markdown(resposta_final)
 
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_final}) # `append()` adds the assistant's message to the session state
+                    st.session_state.messages.append({"role": "assistant", "content": resposta_final})
 
                 except Exception as e:
                     st.error(f"Erro ao analisar documento: {e}")
