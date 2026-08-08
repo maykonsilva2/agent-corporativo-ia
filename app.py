@@ -10,8 +10,9 @@ from langchain_core.caches import InMemoryCache # Used to cache the responses of
 from langchain_core.globals import set_llm_cache # Used to set the cache for the LLMs(in this case, the cache for the responses of the LLMs)
 
 from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, CSVLoader, Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter # Used to split the documents into smaller chunks (this is done because the LLMs have a limited context window)
 from langchain_community.vectorstores import FAISS # Can use other vector stores like Chroma, Pinecone, LanceDB, Qdrant, etc.
@@ -19,6 +20,18 @@ from langchain.agents import create_agent
 
 
 load_dotenv()
+
+# ==========================================
+# Helper: read secrets from st.secrets (Streamlit Cloud) OR .env (local)
+# This makes the same code work in both environments without any changes.
+# ==========================================
+def get_secret(key: str) -> str | None:
+    """Return the secret value from st.secrets (Cloud) or os.environ (local)."""
+    try:
+        return st.secrets[key]
+    except (KeyError, FileNotFoundError):
+        return os.getenv(key)
+
 
 # ==========================================
 # 0. Streamlit PAGE CONFIGURATION (must be the first Streamlit command)
@@ -48,7 +61,7 @@ set_llm_cache(InMemoryCache()) # It is used to cache the responses of the LLMs(i
 def build_available_llms() -> list:
     models = []
 
-    if key := os.getenv('OPENROUTER_API_KEY'):
+    if key := get_secret('OPENROUTER_API_KEY'):
         models.append(
             ChatOpenAI(
                 base_url="https://openrouter.ai/api/v1",
@@ -58,7 +71,7 @@ def build_available_llms() -> list:
             )
         )
     
-    if key := os.getenv('GROQ_API_KEY'):
+    if key := get_secret('GROQ_API_KEY'):
         # llama-3.3-70b-versatile and llama-3.1-8b-instant have been discontinued
         # by Groq (shutdown ~Aug 16, 2026) — use the official replacements
         # URL: https://console.groq.com/docs/deprecations
@@ -78,7 +91,7 @@ def build_available_llms() -> list:
             )
         )
 
-    if key := os.getenv('GEMINI_API_KEY'):
+    if key := get_secret('GEMINI_API_KEY'):
         models.append(
             ChatGoogleGenerativeAI(
                 api_key=SecretStr(key),
@@ -104,26 +117,29 @@ if len(available_models) > 1:
     llm = llm.with_fallbacks(available_models[1:])
 
 
-# Handle Embeddings (Note: OpenAI is required for embeddings in your current setup)
-openai_key     = os.getenv("OPENAI_API_KEY")
+# ==========================================
+# EMBEDDINGS — Priority chain (first available wins):
+#   1. OpenAI          → best quality, requires paid OPENAI_API_KEY
+#   2. Google Gemini   → free generous quota, uses your existing GEMINI_API_KEY ✅
+#   3. HuggingFace     → fully offline fallback, no key needed (~90 MB download on 1st run)
+# For Streamlit Cloud: configure GEMINI_API_KEY in the Secrets panel → free embeddings.
+# ==========================================
+openai_key  = get_secret("OPENAI_API_KEY")
+gemini_key  = get_secret("GEMINI_API_KEY")
+
 if openai_key:
     embeddings = OpenAIEmbeddings(api_key=SecretStr(openai_key))
+elif gemini_key:
+    # Google text-embedding-004 — free tier, ideal for Streamlit Cloud
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/text-embedding-004",
+        google_api_key=SecretStr(gemini_key)
+    )
 else:
-    # If you want to be fully independent of OpenAI, you could use HuggingFaceEmbeddings here instead!
-    st.error("❌ OPENAI_API_KEY is missing. The app needs it to process document embeddings.")
-    st.stop()
-
-# Optional:
-# EMBEDDINGS: uses OpenAI if the key exists; otherwise, it falls back to
-#    free local embeddings (HuggingFace) instead of crashing the entire app
-#    or simply disabling RAG.
-#    pip install langchain-huggingface sentence-transformers
-
-# else:
-#    from langchain_huggingface import HuggingFaceEmbeddings
-#    st.sidebar.info("ℹ️ OPENAI_API_KEY ausente — usando embeddings locais "
-#                     "(HuggingFace: all-MiniLM-L6-v2) para o RAG.")
-#    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    # Fully offline fallback — no API key or billing required.
+    # First run downloads the model (~90 MB); subsequent runs use the local cache.
+    st.sidebar.info("ℹ️ Nenhuma chave de embedding configurada — usando embeddings locais gratuitos (HuggingFace: all-MiniLM-L6-v2).")
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 
 # ==========================================
