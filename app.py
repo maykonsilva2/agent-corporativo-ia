@@ -303,44 +303,6 @@ def buscar_no_documento(pergunta:str) -> str:
 
     return resultado
 
-    # Doubt How Work the citation FONTE:
-
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 1. User asks a question                                          │
-    # └─────────────────────────────────────────────────────────────────┘
-    # ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 2. LLM reads the system_prompt → sees rule "use the tool"        │
-    # │    (system_prompt in action)                                     │
-    # └─────────────────────────────────────────────────────────────────┘
-    # ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 3. LLM decides to CALL the `buscar_no_documento` tool            │
-    # └─────────────────────────────────────────────────────────────────┘
-    # ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 4. The TOOL (Python code) RUNS on the server:                    │
-    # │    - Retrieves documents from FAISS                              │
-    # │    - Reads doc.metadata.get('source')   ← FILE NAME              │
-    # │    - Reads doc.metadata.get('page')     ← PAGE NUMBER            │
-    # │    - Assembles the string: [SOURCE 1: file.pdf — Page 2]          │
-    # │    - Returns all this to the LLM                                 │
-    # └─────────────────────────────────────────────────────────────────┘
-    # ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 5. LLM receives the returned text (with the [SOURCE N] tags)     │
-    # └─────────────────────────────────────────────────────────────────┘
-    # ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 6. LLM reads the system_prompt again → sees rule "4 .cite the source"│
-    # │    (system_prompt in action again)                               │
-    # └─────────────────────────────────────────────────────────────────┘
-    # ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 7. LLM writes the final answer INCLUDING the source citation     │
-    # └─────────────────────────────────────────────────────────────────┘
-
-
 # =========================================================
 # 5. LEAD AGENT (LangGraph)
 # =========================================================
@@ -361,6 +323,75 @@ REGRAS OBRIGATÓRIAS:
 tools=[buscar_no_documento]
 agente = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
 
+# Doubt How Work the citation FONTE:
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 1. User asks a question                                         │
+# └─────────────────────────────────────────────────────────────────┘
+#                               ↓
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 2. LLM reads the system_prompt → sees rule "use the tool"       │
+# │    (system_prompt in action)                                    │
+# └─────────────────────────────────────────────────────────────────┘
+#                              ↓
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 3. LLM decides to CALL the `buscar_no_documento` tool           │
+# └─────────────────────────────────────────────────────────────────┘
+#                              ↓
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 4. The TOOL (Python code) RUNS on the server:                   │
+# │    - Retrieves documents from FAISS                             │
+# │    - Reads doc.metadata.get('source')   ← FILE NAME             │
+# │    - Reads doc.metadata.get('page')     ← PAGE NUMBER           │
+# │    - Assembles the string: [SOURCE 1: file.pdf — Page 2]        │
+# │    - Returns all this to the LLM                                │
+# └─────────────────────────────────────────────────────────────────┘
+#                              ↓
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 5. LLM receives the returned text (with the [SOURCE N] tags)    │
+# └─────────────────────────────────────────────────────────────────┘
+#                              ↓
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 6. LLM reads the system_prompt again → sees rule "4 .cite the source"│
+# │    (system_prompt in action again)                              │
+# └─────────────────────────────────────────────────────────────────┘
+#                              ↓
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 7. LLM writes the final answer INCLUDING the source citation    │
+# └─────────────────────────────────────────────────────────────────┘
+
 # ==========================================
 # 6. CHAT INTERFACE WITH HISTORY
 # ==========================================
+
+if st.session_state.vector_db is not None:
+    st.divider() # The st.divider() function draws a horizontal line across the page
+    st.subheader("💬 Converse com o documento") # The st.subheader() function displays a sub-header
+
+    # Show the entire conversation history
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]): # The st.chat_message() function displays a chat message
+            st.markdown(msg["content"]) # The st.markdown() function displays markdown formatted text
+
+    # The `:=` operator assigns the value returned by st.chat_input() to the variable and also checks if it has a value (i.e., if it's not empty). If it does, the code inside the if block is executed.
+    if pergunta := st.chat_input("Faça uma pergunta sobre o documento..."):
+        st.session_state.messages.append({"role": "user", "content": pergunta}) # `append()` adds the user's message to the session state
+
+        # Display the user's message immediately, without waiting for the agent to respond
+        with st.chat_message("user"):
+            st.markdown(pergunta)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Analisando..."):
+                try:
+                    resposta = agente.invoke({"messages": st.session_state.messages})
+                    
+                    resposta_final = resposta['messages'][-1].content # The `[-1]` operator accesses the last element of the list
+
+                    st.markdown(resposta_final)
+
+                    st.session_state.messages.append({"role": "assistant", "content": resposta_final}) # `append()` adds the assistant's message to the session state
+
+                except Exception as e:
+                    st.error(f"Erro ao analisar documento: {e}")
+else:
+    st.info("⬆️ Faça o upload de um documento para começar a conversar.")
