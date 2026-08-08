@@ -49,6 +49,8 @@ langgraph-checkpoint==4.1.1
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
 langsmith==0.10.12
+langchain-huggingface==1.2.2
+sentence-transformers==5.7.0
 MarkupSafe==3.0.3
 multidict==6.7.1
 narwhals==2.24.0
