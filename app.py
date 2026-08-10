@@ -22,7 +22,7 @@ from langchain.agents import create_agent
 load_dotenv()
 
 # ==========================================
-# Helper: read secrets from st.secrets (Streamlit Cloud) OR .env (local)
+# Read secrets from st.secrets (Streamlit Cloud) OR .env (local)
 # This makes the same code work in both environments without any changes.
 # ==========================================
 def get_secret(key: str) -> str | None:
@@ -54,8 +54,10 @@ set_llm_cache(InMemoryCache()) # It is used to cache the responses of the LLMs(i
 # LLM: Assembles a list of available models in order of priority.
 # The first becomes the primary model; the rest become automatic fallbacks.
 
-# Understand: `if key := os.getenv('OPENROUTER_API_KEY'):` 
+# `if key := os.getenv('OPENROUTER_API_KEY'):` 
 # First, key receives the value. Second, Python checks if that value is valid (not empty). If it is valid, the code enters the if block and executes models.append().
+
+# The `SecretStr()` function is used to securely store and handle sensitive information, such as API keys. It encrypts the key, preventing it from being exposed in plain text in logs or code.
 # ==========================================
 
 def build_available_llms() -> list:
@@ -104,6 +106,7 @@ def build_available_llms() -> list:
 
 available_models = build_available_llms()
 
+# Verify if available_models is empty, if empty, show an error message and stop the app.
 if not available_models:
     st.error("❌ Nenhuma chave de API de LLM encontrada. Defina pelo menos uma "
               "(OPENROUTER_API_KEY, GROQ_API_KEY ou GEMINI_API_KEY) no seu .env."
@@ -112,6 +115,7 @@ if not available_models:
               )
     st.stop()
 
+# This second verification `if` is used to set the primary model and the fallbacks; since to set the fallbacks the list must have at least two elements.
 llm = available_models[0]
 if len(available_models) > 1:
     llm = llm.with_fallbacks(available_models[1:])
@@ -119,13 +123,14 @@ if len(available_models) > 1:
 # ==========================================
 # SESSION STATE — Initialize early, before any cache or widget runs.
 # This guarantees these keys always exist regardless of execution order.
+# `st.session_state` is a dictionary-like object that is used to store data that persists across reruns.
 # ==========================================
 if "vector_db" not in st.session_state:
-    st.session_state.vector_db = None
+    st.session_state.vector_db = None # The vector database used for RAG.
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = [] # The list of messages in the chat history.
 if "last_file_name" not in st.session_state:
-    st.session_state.last_file_name = None
+    st.session_state.last_file_name = None # The name of the last uploaded file.
 
 # ==========================================
 # EMBEDDINGS — HuggingFace local (free, no API key required)
