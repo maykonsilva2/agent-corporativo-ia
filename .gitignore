@@ -38,9 +38,14 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Local SQLite database(do not comit test data)
+*.db
+chat_history.db
+
 # Documentation guide
 guia_repositorio_agente_corporativo.md
-sugestões-de-códigos-de-IA.md
+sugestoes-de-codigos-de-IA.md
+guia-implementacao-feature.md
 
 # Config to fix Python Interpreter not work in Antigravity IDE
 .vscode
