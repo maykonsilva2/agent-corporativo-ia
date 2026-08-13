@@ -1,28 +1,42 @@
 import os
+import csv # Used to detect the delimiter of CSV files (in this case, the delimiter of CSV files)
 import tempfile # Used to create temporary files (In this case, the temporary files for the Large Language Models (LLMs) to process.)
-from pydantic.v1 import tools
+
 import streamlit as st
 from dotenv import load_dotenv # Used to load environment variables from .env file (in this case, the API key for the LLMs)
 from pydantic import SecretStr # Used to hide sensitive information (in this case, the API key for the LLMs)
 
-from langchain_core.tools import retriever, tool
+from langchain_core.tools import tool
 from langchain_core.caches import InMemoryCache # Used to cache the responses of the LLMs(in this case, the responses of the LLMs in the memory)
 from langchain_core.globals import set_llm_cache # Used to set the cache for the LLMs(in this case, the cache for the responses of the LLMs)
 
 from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, CSVLoader, Docx2txtLoader
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter # Used to split the documents into smaller chunks (this is done because the LLMs have a limited context window)
 from langchain_community.vectorstores import FAISS # Can use other vector stores like Chroma, Pinecone, LanceDB, Qdrant, etc.
+
+#  Keep the import that already works in your current project.
+# If you update LangChain someday and it breaks, switch to:
+#   from langgraph.prebuilt import create_react_agent
+#   agente = create_react_agent(model=llm, tools=[buscar_no_documento], prompt=system_prompt)
 from langchain.agents import create_agent
 
+import database as db
 
 load_dotenv()
 
 # ==========================================
-# Read secrets from st.secrets (Streamlit Cloud) OR .env (local)
+# CONSTANTS
+# ==========================================
+ALLOWED_EXTENSIONS = {"pdf","txt","csv","docx"}
+DOCS_DIR = "docs"
+
+
+# ==========================================
 # This makes the same code work in both environments without any changes.
 # ==========================================
 def get_secret(key: str) -> str | None:
@@ -49,6 +63,9 @@ st.set_page_config(
 # InMemoryCache stores data in computer's memory. If you stop your Streamlit app or terminal, the cache is completely wiped.
 set_llm_cache(InMemoryCache()) # It is used to cache the responses of the LLMs(in this case, the responses of the LLMs in the memory)
 
+# Initialize SQLite DB — create tables if they don't exist.
+db.init_db()
+
 # ==========================================
 # 1. LLM Configuration with Fallback
 # LLM: Assembles a list of available models in order of priority.
@@ -60,6 +77,10 @@ set_llm_cache(InMemoryCache()) # It is used to cache the responses of the LLMs(i
 # The `SecretStr()` function is used to securely store and handle sensitive information, such as API keys. It encrypts the key, preventing it from being exposed in plain text in logs or code.
 # ==========================================
 
+# @st.cache_resource ensures that the models are created ONLY ONCE
+# per server session, not on every Streamlit rerun.
+# Without this, every chat interaction would recreate all the models (slow and expensive).
+@st.cache_resource(show_spinner="⏳ Carregando modelos de LLM...")
 def build_available_llms() -> list:
     models = []
 
@@ -120,17 +141,6 @@ llm = available_models[0]
 if len(available_models) > 1:
     llm = llm.with_fallbacks(available_models[1:])
 
-# ==========================================
-# SESSION STATE — Initialize early, before any cache or widget runs.
-# This guarantees these keys always exist regardless of execution order.
-# `st.session_state` is a dictionary-like object that is used to store data that persists across reruns.
-# ==========================================
-if "vector_db" not in st.session_state:
-    st.session_state.vector_db = None # The vector database used for RAG.
-if "messages" not in st.session_state:
-    st.session_state.messages = [] # The list of messages in the chat history.
-if "last_file_name" not in st.session_state:
-    st.session_state.last_file_name = None # The name of the last uploaded file.
 
 # ==========================================
 # EMBEDDINGS — HuggingFace local (free, no API key required)
@@ -143,6 +153,49 @@ def load_embeddings():
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 embeddings = load_embeddings()
+
+# ==========================================
+# SESSION STATE — Initialize early, before any cache or widget runs.
+# This guarantees these keys always exist regardless of execution order.
+# `st.session_state` is a dictionary-like object that is used to store data that persists across reruns.
+# ==========================================
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = None # The vector database used for RAG.
+if "messages" not in st.session_state:
+    st.session_state.messages = [] # The list of messages in the chat history.
+if "last_file_name" not in st.session_state:
+    st.session_state.last_file_name = None # The name of the last uploaded file.
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None # The id of the current conversation.
+
+# Signature of currently indexed files (ordered tuple).
+# Avoids reprocessing the same files on every Streamlit rerun.
+# E.g., ("faq_suporte.txt", "politica_privacidade.txt")
+if "indexed_files" not in st.session_state:
+    st.session_state.indexed_files = []
+
+# List of filenames currently in the uploader (detect changes).
+if "uploaded_file_names" not in st.session_state:
+    st.session_state.uploaded_file_names = []
+
+# Incremented to force Streamlit to recreate the empty file_uploader. 
+# Streamlit has no "clear uploader" method; the official solution is to change
+# the widget's key, which causes Streamlit to create a new, empty instance.
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
+
+# ==========================================
+# HELPER FUNCTIONS — file validation and loading
+# ==========================================
+
+
+
+
+
+
+
+
 
 
 # ==========================================
