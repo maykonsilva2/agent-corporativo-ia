@@ -1,5 +1,6 @@
 import os
 import csv # Used to detect the delimiter of CSV files (in this case, the delimiter of CSV files)
+import re
 import tempfile # Used to create temporary files (In this case, the temporary files for the Large Language Models (LLMs) to process.)
 
 import streamlit as st
@@ -189,12 +190,171 @@ if "uploader_key" not in st.session_state:
 # HELPER FUNCTIONS — file validation and loading
 # ==========================================
 
+def is_valid_file(file_name: str) -> bool:
+    """Return True if the file extension is pdf, txt, csv or docx"""
+    return file_name.split(".")[-1].lower() in ALLOWED_EXTENSIONS
 
+def detect_csv_delimiter(file_path: str) -> str:
 
+    """Automatically detects the CSV delimiter (comma vs. semicolon).
 
+    CSV files exported by the Brazilian Portuguese version of Excel use ';' 
+    as the delimiter, whereas the international standard uses ','.
+    LangChain's CSVLoader defaults to ',', so we need to detect the correct one.
 
+    Strategy:
+    1. Attempt to use csv.Sniffer (standard library) for automatic detection.
+    2. If that fails (e.g., the file is too short or ambiguous), count which
+    delimiter appears most frequently.
+    """
 
+    # `r` -> read mode, exist other modes such as `w` -> write mode, `a` -> append mode, etc.
+    # `erros` -> Ignore errors when reading the file (e.g. if the file is not utf-8 encoded, it will ignore the errors and return the result).
+    with open(file_path, mode='r', encoding="utf-8", errors="ignore") as file:
+        sample = file.read(1024) # Read first 1KB of file
+        try:
+            sniffer = csv.Sniffer()
+            dialect = sniffer.sniff(sample, delimiters=",;|\t")
+            return dialect.delimiter
+        except Exception:
+            # If the sniffer fails, we'll count the occurrences of each delimiter.
+            if sample.count(";") > sample.count(","):
+                return ";"
+            return ","
+ 
+ # file_extension: str | None = None ->  This means the second argument is optional. If the code calling this function doesn't pass an extension, it defaults to None.
+def get_loader(file_path: str, file_extension: str | None = None):
+    """Returns the appropriate LangChain loader for the file type.
 
+    For CSVs, it detects the delimiter before creating the CSVLoader.
+    For other types, it uses the corresponding loader from the dictionary.
+    TextLoader is the default fallback for .txt and any unmapped extensions.
+
+    `return loaders.get(file_extension, TextLoader)(file_path)` -> 
+    1. loaders.get(file_extension, TextLoader)
+    This asks the dictionary: "Do you have a tool for this extension?"
+
+    If file_extension is "pdf" ➡️ It returns PyPDFLoader.
+
+    If file_extension is "docx" ➡️ It returns Docx2txtLoader.
+
+    If file_extension is "txt" (or anything else, like "md") ➡️ The dictionary says "I don't have that!", so .get() safely returns the default backup: TextLoader.
+
+    2. Adding (file_path) at the end
+    Right now, step 1 just gave us the Class (the blueprint). We need to actually build the tool by passing the file path into it.
+    So, Python takes the result from step 1 and adds (file_path) to it.
+
+    Examples of what Python actually executes behind the scenes:
+
+    If PDF: PyPDFLoader(file_path)
+    If DOCX: Docx2txtLoader(file_path)
+    If TXT: TextLoader(file_path)
+    """
+
+    if file_extension is None:
+        file_extension = file_path.split(".")[-1].lower()
+
+    if file_extension == "csv":
+        delimiter = detect_csv_delimiter(file_path)
+        return CSVLoader(file_path, csv_args={"delimiter": delimiter})
+    
+    loaders = {"pdf":PyPDFLoader, "docx":Docx2txtLoader}
+    return loaders.get(file_extension, TextLoader)(file_path)
+
+def list_test_document() -> list:
+    """Lists the valid files within the docs/ folder (ordered alphabetically)."""
+
+    # Check if the docs folder exists. If not, return an empty list.
+    if not os.path.isdir(DOCS_DIR):
+        return []
+    
+    return sorted(f for f in os.listdir(DOCS_DIR) if os.path.isfile(os.path.join(DOCS_DIR, f)) and is_valid_file(f))
+
+# ==========================================
+# SIDEBAR CALLBACKS
+# Streamlit executes callbacks BEFORE the script reruns. This allows
+# for safely modifying widget state (e.g., multiselect, file_uploader)
+# without triggering the "StreamlitAPIException: cannot be modified after being
+# instantiated" error. Without callbacks, attempting to change a widget's
+# st.session_state after it has already rendered would cause an error.
+# ==========================================
+
+def new_conversation():
+    """Resets everything and starts a conversation from scratch.
+
+    Increments uploader_key to force Streamlit to recreate the
+    file_uploader as empty (there is no direct API to clear the uploader).
+
+    st.session_state.messages = [] -> Erases the chat bubbles from the screen.
+    st.session_state.conversation_id = None -> Tells the database to create a new row when the user asks their first new question.
+    st.session_state.vector_db = None -> Erases the AI's memory of the old documents.
+    st.session_state.indexed_files = () -> Clears the list of what files are currently loaded.
+    st.session_state.uploaded_file_names = [] -> Forgets the names of the files the user dragged and dropped.
+    st.session_state.uploader_key += 1 -> This is a very clever Streamlit trick. Streamlit does not have a st.file_uploader.clear() command. The only official way to force the file uploader widget to become empty again is to change its key. By adding 1 to the key, Streamlit sees a brand new widget and draws an empty one.  
+    """
+    st.session_state.messages = []
+    st.session_state.conversation_id = None
+    st.session_state.vector_db = None
+    st.session_state.indexed_files = ()
+    st.session_state.uploaded_file_names = []
+    st.session_state.uploader_key += 1
+
+def load_conversation(conversation_id, file_names, available_docs):
+    """
+    Loads a saved conversation from SQLite.
+
+    Automatic document reloading logic:
+    - If the conversation used only test documents (files from the `docs/` folder)
+    and they all still exist, the system automatically reindexes them by selecting
+    them in the multi-select list. The `skip_chat_reset` flag prevents the
+    processing block from clearing the messages just loaded from the database.
+    - If the conversation used user-uploaded files (not located in `docs/`),
+    the `vector_db` cannot be rebuilt—the user must upload the
+    file again. The old messages remain displayed (read-only mode).
+    """
+
+    st.session_state.conversation_id = conversation_id
+    st.session_state.messages = db.get_messages(conversation_id)
+
+    # file_names is a string in database split for `;`
+    # `if file` checks if the string is empty
+    # `if file` is a shortcut for if file != ""
+    files = [file for file in (file_names or "").split(";") if file]
+
+    # `all` function: Takes an iterable (like our list of files)
+    # and returns True only if EVERY single item inside it is True.
+    # In this case, it checks if EVERY file exists in the docs folder.
+    # If even one file is missing, `all()` returns False.
+    if files and all(file in available_docs for file in files):
+        # All files are test documents that still exist → reindex
+        st.session_state.uploaded_file_names = []
+        st.session_state.uploader_key += 1 # clear the uploader
+
+        # Mark the test documents as selected (the multiselect
+        # will read this list from session_state on the next rerun)
+        st.session_state["selected_test_docs"] = files
+        # Flag: the processing block will see that indexed_files has changed
+        # and will reindex. Without skip_chat_reset, it would clear the messages
+        # we just loaded from SQLite. The flag is "consumed" (popped)
+        # in the processing block, so it only applies to a single execution.
+        st.session_state.skip_chat_reset = True
+    else:
+        # Uploaded files (not persisted) → user needs to re-upload
+        st.session_state.vector_db = None
+        st.session_state.indexed_files = ()
+        st.session_state.uploaded_file_names = []
+        st.session_state.uploader_key += 1
+
+def delete_conversation(conv_id):
+    """Deletes a conversation from SQLite and resets the chat state."""
+    db.delete_conversation(conv_id)
+    if st.session_state.conversation_id == conv_id:
+        st.session_state.conversation_id = None
+        st.session_state.messages = []
+
+# ==========================================
+# SIDEBAR — history + test documents
+# ==========================================
 
 
 
