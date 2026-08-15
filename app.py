@@ -356,8 +356,121 @@ def delete_conversation(conv_id):
 # SIDEBAR — history + test documents
 # ==========================================
 
+with st.sidebar:
+    st.header("⚙️ Painel")
+
+    # New conversation Button (uses callback, not inline logic)
+    st.button("➕ Nova conversa", on_click=new_conversation, use_container_width=True)
+
+    st.divider()
+
+    # Test Documents
+    st.subheader("🧪 Documentos de teste")
+    available_docs = list_test_document()
+
+    # If available_docs is not empty -> st.multiselect
+    # If available_docs is empty -> else: st.caption("Nenhum arquivo válido encontrado na pasta docs/.")
+    if available_docs:
+
+        # key="selected_test_docs" -> The widget's identity — its value lives in st.session_state["selected_test_docs"]. This is how the callbacks (new_conversation, load_conversation) can clear it or pre-fill it!
+        
+
+        # disable -> receive bool 
+        # disable=bool(...) -> bool() converts anything into True or False. For lists, the rule is:
+        #     [] (empty list) -> False -> multiselect enabled
+        #     ["relatorio.pdf"] -> True -> multiselect disabled
+
+        #  options = available_docs -> The list of files the user can pick
+        
+
+        st.multiselect(
+            "Selecione arquivos da pasta docs/:",
+            options=available_docs,
+            key="selected_test_docs",
+            disabled=bool(st.session_state.uploaded_file_names),
+        )
+        st.caption("ℹ️ Ao enviar seu próprio arquivo, estas opções são desmarcadas automaticamente.")
+    else:
+        st.caption("Nenhum arquivo válido encontrado na pasta docs/.")
+
+    st.divider()
+
+    # Conversation History
+
+    # conversations = db.list_conversations() -> Goes to SQLite and returns all conversations (newest first), as dictionaries:
+        # [ {"id": 2, "title": "Como cancelar?", "file_names": "faq_suporte.txt", "created_at": "2026-02-09T15:07:45", "message_count": 4}]
+
+    st.subheader("🕘 Histórico de conversas")
+    conversations = db.list_conversations()
+
+    # If conversations is empty -> st.caption("Nenhuma conversa encontrada.")
+    if not conversations:
+        st.caption("Nenhuma conversa salva ainda.")
+    else:
+        for conv in conversations:
+            # Formats the date for disaplay (YYYY-MM-DD HH:MM)
+            # [:16] → cuts the seconds
+            # .replace("T", " ") → swaps T for a space 
+                #  "2026-02-09T15:07"  ->  "2026-02-09 15:07"
+            
+            # created_at -> It is stored in the database
+
+            date_label = conv["created_at"][:16].replace("T"," ")
+            
+            # col1, col2 = st.columns([5,1]) -> Two-column layout Splits the row into two columns with a 5:1 ratio:
+            col1, col2 = st.columns([5,1])
+
+            # ┌──────────────────────────┬────┐
+            # │  col1 (5 parts wide)     │col2│
+            # │  💬 Conversation title   │ 🗑️ │
+            # └──────────────────────────┴────┘
+
+            # col1(big area) -> Te load button
+            # col2(small area) -> The delete button
+
+            # conv['title'][:28] ->  The title, cut at 28 characters (so long titles don't break the layout)
+
+            # key=f"load_{conv['id']}"
+                #  Unique ID for each button: load_1, load_2, load_3... Without this, Streamlit can't tell the buttons apart!
+
+            # args=(...) -> Arguments passed to the callback. This is how load_conversation(conv_id, file_names, available_docs) receives its 3 parameters!
+                # args: callbacks can't receive parameters directly like normal functions. args= is Streamlit's way of "packaging" the values and delivering them when the button is clicked.
+
+            # The tooltip that appears when you hover the mouse (shows date + files)
+
+            # use_container_width=True -> makes the button take the full width of the column.
+            
+
+            with col1:
+                st.button(
+                    f"💬 {conv['title'][:28]}",
+                    key=f"load_{conv['id']}",
+                    on_click=load_conversation,
+                    args=(conv['id'], conv['file_names'], available_docs),
+                    help=f"{date_label} . Arquivos: {conv['file_names'] or 'n/a'}",
+                    use_container_width=True,
+                )
+
+            #  Notice args=(conv["id"],) — with the comma! You already know why: a tuple with ONE element needs the trailing comma. Without it, (conv["id"]) is just a number, not a tuple!
+            with col2:
+                st.button(
+                    "🗑️",
+                    key=f"del_{conv['id']}",
+                    on_click=delete_conversation,
+                    args=(conv['id'],),
+                )
+
+# Retrieves the current selection of test documents from session_state
+# This reads what the user selected in the multiselect, so the rest of the script (the RAG processing block) can use it.
+# Why .get() instead of direct access?
+    # st.session_state["selected_test_docs"]  -> KeyError — app crashes
+    # st.session_state.get("selected_test_docs", [])  -> Returns the default [] — safe
+    # .get(key, default) = "give me the value if it exists; otherwise, give me this backup value". Same pattern as doc.metadata.get("page", "N/A") in your tool function!
+selected_test_docs = st.session_state.get("selected_test_docs", [])
 
 
+
+            
 # ==========================================
 # 2. STREAMLIT INTERFACE
 # This block renders actual visual elements and interactive widgets inside the body of the web page that users see and interact with.
@@ -370,18 +483,43 @@ st.title("🤖 Agente Corporativo IA")
 st.info("""
 **ℹ️ Como usar esta ferramenta:**
 
-1. **Upload:** Carregue um documento da empresa nos formatos `.pdf`, `.txt`, `.csv` ou `.docx` no botão abaixo.
-2. **Processamento:** Aguarde alguns segundos enquanto a IA lê e indexa o conteúdo do arquivo.
-3. **Conversa:** Faça perguntas sobre o documento no campo de chat. 
+1. **Upload:** Carregue um ou mais documentos da empresa (`.pdf`, `.txt`, `.csv` ou `.docx`) — **ou** selecione documentos de teste na barra lateral.
+2. **Processamento:** Aguarde enquanto a IA lê e indexa o conteúdo dos arquivos.
+3. **Conversa:** Clique em **➕ Nova conversa** e faça perguntas sobre os documentos. O histórico é salvo automaticamente.
 
 **Regras do Agente:**
-- As respostas serão baseadas **exclusivamente** no documento enviado.
+- As respostas serão baseadas **exclusivamente** nos documentos selecionados.
 - Sempre citará a fonte da informação (página ou linha).
-- Se a informação não existir no documento, a IA informará que não foi encontrada (não há invenção de respostas).
+- Se a informação não existir no documento, a IA informará que não foi encontrada.
 """)
 
-# This widget is used here in code because first we need a place where the user can upload a document. If there is no such place, the user will not be able to upload a document.
-uploaded_file = st.file_uploader("Escolha um arquivo", type=['pdf', 'txt', 'csv', 'docx'])
+# ── File Uploader (multiple files) ──
+# Dynamic key: when we increment uploader_key in session_state,
+# Streamlit sees a new key and creates a fresh (empty) file_uploader.
+# This is the only way to programmatically "clear" a file_uploader.
+
+uploaded_file = st.file_uploader(
+    "Escolha um arquivo ou mais arquivos (PDF, CSV, TXT, DOCX)",
+    type=['pdf', 'txt', 'csv', 'docx'],
+    accept_multiple_files=True,
+    key=f"uploader_{st.session_state.uploader_key}",
+)
+
+
+# ==========================================
+# TYPE VALIDATION + NEW UPLOAD DETECTION
+# ==========================================
+
+
+
+
+
+
+
+
+
+
+
 
 # (Session state already initialized above, before embeddings load)
 
