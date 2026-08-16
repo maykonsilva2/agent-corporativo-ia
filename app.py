@@ -3,6 +3,7 @@ import csv # Used to detect the delimiter of CSV files (in this case, the delimi
 import re
 import tempfile # Used to create temporary files (In this case, the temporary files for the Large Language Models (LLMs) to process.)
 
+from pandas.core.ops import invalid
 import streamlit as st
 from dotenv import load_dotenv # Used to load environment variables from .env file (in this case, the API key for the LLMs)
 from pydantic import SecretStr # Used to hide sensitive information (in this case, the API key for the LLMs)
@@ -509,89 +510,53 @@ uploaded_file = st.file_uploader(
 # ==========================================
 # TYPE VALIDATION + NEW UPLOAD DETECTION
 # ==========================================
+valid_upload_names = []
 
+if uploaded_file:
+    for file in uploaded_file:
+        if is_valid_file(file.name):
+            valid_upload_names.append(file.name)
+        else:
+            st.error(f"❌ Arquivo '{file.name}' não suportado. "
+                "Formatos permitidos: **PDF, CSV, TXT, DOCX**."
+            )
 
+    # Detects whether the set of uploaded files has changed since the last run. 
+    # If it has changed, unmarks the test documents and clears the state for reprocessing.
 
+    # sorted() -> Sorts the items in the list in order alphabetically (or numerically if the list contained numbers)
+    # sorted() -> ["a", "c", "b"] becomes ["a", "b", "c"]
 
+    # Why sorted() on both sides? 
+    # Because the user might upload the files in a different order, Sorting guarantees we compare content, not order
+    current_files = sorted(valid_upload_names)
+    previous_files = sorted(st.session_state.uploaded_file_names)
 
-
-
-
-
-
-
-
-# (Session state already initialized above, before embeddings load)
-
-# (last_file_name already initialized above)
-
-# ==========================================
-# 3. DOCUMENT PROCESSING (RAG)
-# Question about the difference:
-# Use `!=` to compare Values(Strings, Numbers, Lists, Dicts).
-# Use `is not` to compare Objects in Memory(None, True, False)
-# Best Practice in Python (PEP 8 standard), you should always use `is` or `is not` when checking against `None`. It is faster and avoids unexpected behavior.
-# ==========================================
-
-# When the page loads, the st.file_uploader is empty (value is None). This line checks if the user has actually selected a file. If they haven't, the code skips this entire block. If they have, it enters the block.
-if uploaded_file is not None:
-    # Reset when loading a new  file
-    if uploaded_file.name != st.session_state.last_file_name:
+    if current_files != previous_files:
+        st.session_state.selected_test_docs = [] # Deselects test docs
+        st.session_state.uploaded_file_names = valid_upload_names
         st.session_state.vector_db = None # Clears old document memory
+        st.session_state.indexed_files = () # Clears old document memory
         st.session_state.messages = [] # Clears old chat history
-        st.session_state.last_file_name = uploaded_file.name # Rememberes the new file
+        st.session_state.conversation_id = None # Clears old conversation id
 
-    # If the database is None, it means the file hasn't been processed yet. If the database already exists (because the user just sent a chat message, causing a rerun), the code skips the block completely, saving time and API costs.
-    
-    if st.session_state.vector_db is None:
-        # Extract the File Extension
-        # What it does: Splits the file name by . and extracts the last part (e.g., "report.pdf" -> "pdf"), converting it to lowercase.
+# If the uploader is empty, but the memory has files loaded, clear them.
+# The user remove all files, and the uploader is empty, clear them.
+# There are no new documents — the documents are simply gone. This is the read-only mode:
+# The user can still READ the old conversation on screen
+elif st.session_state.uploaded_file_names:
+    st.session_state.uploaded_file_names = [] # Clear old file names
+    st.session_state.vector_db = None # Clears old document memory
+    st.session_state.indexed_files = () # Clears old document memory
 
-        # Question dubt: In Python, [-1] is used to select the last element of a list.When a filename is split by a period using .split('.'), it creates a list of all the parts of the name. Since the file extension always comes after the final period, accessing the index [-1] guarantees you get the actual extension, even if the file name contains multiple periods (e.g., document.backup.v2.pdf).
 
-        file_extension = uploaded_file.name.split('.')[-1].lower()
 
-        # Create a Temporary Disk File
-        # Streamlit keeps uploaded files in RAM (`BytesIO` buffer). However, standard file loaders (like `PyPDFLoader`) require an actual physical file path on your hard drive.
-        # `delete=False`: Stops Python from automatically deleting the temporary file the moment the with block closes, allowing LangChain to open and read it.
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as tmp:
-            tmp.write(uploaded_file.getvalue()) # This line writes the actual contents of the file into the temporary file.
-            tmp_path = tmp.name # This line assigns the file path of the temporary file to the variable 'tmp_pth'.
+# ==========================================
+# DOCUMENT PROCESSING (RAG)
+# Determines which files to index and reprocesses them only when changes occur.
+# ==========================================
 
-        
-        with st.spinner("Processando o documento..."):
-            # Load and Parse the File
-            # Fallback:  Any other extension defaults to TextLoader
-            # Easy to Extend: Adding support for a new file type (like JSON or Markdown) just requires adding one key-value pair to the loaders dictionary.
-            try:
-                loaders = {'pdf': PyPDFLoader, 'csv': CSVLoader, 'docx': Docx2txtLoader}
 
-                # Is actually doing two steps in one
-                # Finding the Class (The Lookup)
-
-                # `loaders.get(extensao, TextLoader)` -> It gets the loader class: If extensao is 'pdf', it evaluates to the class `PyPDFLoader`.
-                #  It falls back to a default: .get(key, default) returns TextLoader as a safe fallback if extensao isn't in the dictionary (e.g., for .txt, .py, or .md files).
-
-                # Instantiating the Class (The (tmp_path) Part) -> Once the dictionary resolves to a class (e.g., PyPDFLoader), Python replaces that part of the code and executes it like this: 
-                # If extensao == 'pdf':
-                # loader = PyPDFLoader(tmp_path)
-
-                # If extensao is unknown (e.g., 'txt'):
-                # loader = TextLoader(tmp_path)
-                loader = loaders.get(file_extension, TextLoader)(tmp_path)
-                docs = loader.load()
-
-                chunks = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200).split_documents(docs)
-
-                # It converts those chunks into mathematical vectors (using the embeddings model you configured earlier) and stores them in FAISS (a fast vector database).
-                # It saves the FAISS database into st.session_state so it survives future Streamlit reruns.
-                st.session_state.vector_db = FAISS.from_documents(chunks, embeddings)
-                st.success(f"✅ Documento '{uploaded_file.name}' processado! {len(chunks)} trechos indexados. ")
-            except Exception as e:
-                st.error(f"Erro ao processar: {e}")
-            finally:
-                # Run to delete the temporary file from your disk after processing finishes, preventing temporary file memory leaks on your machine.
-                os.remove(tmp_path)
 
 # ==========================================
 # 4. AGENT TOOL (RAG Search) + 5. LEAD AGENT + 6. CHAT INTERFACE
