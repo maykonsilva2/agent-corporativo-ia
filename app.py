@@ -1,3 +1,4 @@
+from logging import exception
 import os
 import csv # Used to detect the delimiter of CSV files (in this case, the delimiter of CSV files)
 import re
@@ -499,7 +500,7 @@ st.info("""
 # Streamlit sees a new key and creates a fresh (empty) file_uploader.
 # This is the only way to programmatically "clear" a file_uploader.
 
-uploaded_file = st.file_uploader(
+uploaded_files = st.file_uploader(
     "Escolha um arquivo ou mais arquivos (PDF, CSV, TXT, DOCX)",
     type=['pdf', 'txt', 'csv', 'docx'],
     accept_multiple_files=True,
@@ -512,8 +513,8 @@ uploaded_file = st.file_uploader(
 # ==========================================
 valid_upload_names = []
 
-if uploaded_file:
-    for file in uploaded_file:
+if uploaded_files:
+    for file in uploaded_files:
         if is_valid_file(file.name):
             valid_upload_names.append(file.name)
         else:
@@ -554,9 +555,186 @@ elif st.session_state.uploaded_file_names:
 # ==========================================
 # DOCUMENT PROCESSING (RAG)
 # Determines which files to index and reprocesses them only when changes occur.
+
+
+# Important background: Streamlit runs the whole script again and again
+# This is very important.
+# Every time the user does something, Streamlit reruns the entire app.py.
+
+# Examples:
+# user clicks a button
+# user selects a file
+# user types a question
+# user presses Enter
+# page refreshes
+
+# So this section must be smart.
+# It must not process the documents every single time.
+# That would be slow and expensive.
+
 # ==========================================
 
+# Determine the source of the files: uploads take priority over test docs
 
+# Verify if valid_upload_names is not empty.
+if  valid_upload_names:
+    target_files = tuple(sorted(valid_upload_names))
+    origin = "uploads"
+# If no upload, use selected test documents
+elif selected_test_docs:
+    target_files = tuple(sorted(selected_test_docs))
+    origin = "docs"
+else:
+    target_files = ()
+    origin = None
+
+# Only reprocess if the set of files has changed (compare with indexed_files).
+# Without this check, Streamlit would reprocess everything on every rerun (slow).
+if origin and st.session_state.indexed_files != target_files:
+    # skip_chat_reset: flag set by load_conversation() when reopening a
+    # conversation. If True, we don't clear the messages (we just loaded them
+
+    # This does two things:
+    # - Returns the value of "skip_chat_reset" if it exists.
+    # - Removes it from st.session_state.
+    # - If it does not exist, it returns False.
+    # REMEMBER .pop() removes the item from the dictionary.
+
+
+    # What is skip_chat_reset?
+    # Normally, when the app indexes new documents, it clears the chat
+    skip_reset = st.session_state.pop("skip_chat_reset", False)
+
+    with st.spinner("Processando documento(s)..."):
+        try:
+            # raw_docs is a list.
+            # It will store the raw document objects loaded from the files.
+            # Example:
+            # PDF page objects
+            # CSV row objects
+            # TXT content objects
+            # DOCX content objects
+            # LangChain loaders usually return a list of Document objects.
+            
+            # Each Document has:
+            # page_content
+            # metadata
+            raw_docs = []
+
+            if origin == "uploads":
+                # Uploaded files reside in RAM (BytesIO) → LangChain loaders require
+                # temporary disk files. 
+                # Each file is saved, processed, and deleted individually.
+                for uploaded_file in uploaded_files:
+                    # if file not supported, skip it.
+                    if not is_valid_file(uploaded_file.name):
+                        continue # loop to the next file
+                    
+                    # Get the file extension
+                    ext = uploaded_file.name.split('.')[-1].lower()
+                    
+                    # Create a temporary file
+                    # This is very important.
+                    # tempfile.NamedTemporaryFile
+                    # This creates a temporary file on the computer.
+                    # delete=False
+                    # By default, Python could delete the temporary file automatically when closed.
+                    # Why?
+                    # Because the loader still needs to read the file after this with block closes.
+                    # So the app will delete it manually later.
+
+                    # suffix=f".{ext}"
+                    # This gives the temporary file the correct extension.
+                    # This helps some loaders understand the file type.
+                    # tmp.write(uploaded_file.getvalue())
+                    # This writes the uploaded file bytes into the temporary file.
+
+                    # uploaded_file.getvalue()
+                    # returns the binary content of the uploaded file.
+
+                    # tmp_path = tmp.name
+                    # This saves the temporary file path.
+
+                    # NamedTemporaryFile(delete=False): the file needs
+                    # to exist on disk while the loader reads it. We delete
+                    # it manually in the finally block.
+
+                    # .extend()
+
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
+                        tmp.write(uploaded_file.getvalue())
+                        tmp_path = tmp.name
+                    try:
+                        # Load documents based on extension
+                        # get_loader(tmp_path, ext)
+                        # This function chooses the correct LangChain loader.
+                        
+                        # loader.load()
+                        # This reads the file.
+                        # It returns a list of LangChain Document objects.
+
+                        # raw_docs.extend(...)
+                        # This adds all loaded documents to the raw_docs list. (append() -> add one item and extend() -> add many items) 
+                        loader = get_loader(file_path=tmp_path, file_extension=ext)
+                        raw_docs.extend(loader.load())
+                    
+                    except Exception as e:
+                        st.warning(f"⚠️ Erro ao processar {uploaded_file.name}: {e}")
+                    finally:
+                        # finally: ensures cleanup even if the loader fails. 
+                        # Without this, temporary files would accumulate in /tmp.
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+            
+            # Uploads processing END
+            # Process test documents from docs/ 
+            else:
+                # Test documents are already on disk in the docs/ folder.
+                for test_doc_name in target_files:
+                    # build the file path
+                    # e.g.,
+                    # DOCS_DIR = "docs"
+                    # fname = "faq_suporte.txt"
+                    # result => "docs/faq_suporte.txt"
+                    
+                    file_path = os.path.join(DOCS_DIR, test_doc_name)
+                    try:
+                        loader = get_loader(file_path)
+                        raw_docs.extend(loader.load())
+                    except Exception as e:
+                        st.warning(f"⚠️ Erro ao processar {test_doc_name}: {e}")
+
+            # Chunking
+            if raw_docs:
+                chunks = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200).split_documents(raw_docs)
+                # Creates the FAISS index from all combined chunks. 
+                # FAISS.from_documents converts each chunk into an embedding
+                # vector and stores them in a fast-search structure.
+            
+                st.session_state.vector_db = FAISS.from_documents(chunks, embeddings)
+                st.session_state.indexed_files = target_files # Remember which files were indexed
+
+                #This clears the current chat.
+                # It also clears the current SQLite conversation ID.
+                if not skip_reset:
+                    st.session_state.messages = []
+                    st.session_state.conversation_id = None
+
+                st.success(
+                    f"✅ {len(target_files)} arquivo(s) indexado(s) — "
+                    f"{len(chunks)} trechos processados."
+                )
+            else:
+                st.error("Nenhum documento pôde ser processado.")
+        except Exception as e:
+            st.error(f"Erro ao processar o(s) documento(s): {e}")
+
+#  Clear index when nothing is selected
+#  No documents test and no documents upload
+elif origin is None and st.session_state.indexed_files:
+    st.session_state.vector_db = None
+    st.session_state.indexed_files = ()
+    st.info("Indexação removida. Selecione um arquivo para indexar.")
 
 # ==========================================
 # 4. AGENT TOOL (RAG Search) + 5. LEAD AGENT + 6. CHAT INTERFACE
