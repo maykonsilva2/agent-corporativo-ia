@@ -737,14 +737,8 @@ elif origin is None and st.session_state.indexed_files:
     st.info("Indexação removida. Selecione um arquivo para indexar.")
 
 # ==========================================
-# 4. AGENT TOOL (RAG Search) + 5. LEAD AGENT + 6. CHAT INTERFACE
-# NOTE: The tool, agent, and chat interface are all defined together inside
-# this block. This is intentional — the @tool function captures `_vector_db`
-# as a closure variable, avoiding the need to access st.session_state at
-# tool-execution time (which fails when LangGraph runs the tool in a
-# different thread context).
+# 6. AGENT TOOL + AGENTE + INTERFACE DE CHAT
 # ==========================================
-
 system_prompt = """Você é um assistente corporativo especializado em análise de documentos internos.
 Responda SEMPRE em Português do Brasil (pt-BR).
 
@@ -756,28 +750,34 @@ REGRAS OBRIGATÓRIAS:
 5. Jamais invente informações.
 """
 
-if st.session_state.vector_db is not None:
+# Exibe o histórico de mensagens (também em modo somente leitura quando
+# o vector_db não está disponível — ex: conversa recarregada cujo upload
+# foi perdido)
+st.divider()
+st.subheader("💬 Converse com o documento")
 
-    # ─────────────────────────────────────────────────────────────────
-    # Capture vector_db as a local variable (closure).
-    # The @tool function below closes over `_vector_db`, so it works
-    # even when LangGraph/LangChain runs the tool in a different thread
-    # where st.session_state would not be accessible.
-    # ─────────────────────────────────────────────────────────────────
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+if st.session_state.vector_db is not None:
+    # ── Closure: captura vector_db como variável local ──
+    # A função @tool abaixo fecha sobre _vector_db (closure). Isso é
+    # necessário porque o LangGraph pode executar a ferramenta em uma
+    # thread diferente, onde st.session_state não estaria acessível.
+    # Ao capturar como variável local, a ferramenta sempre vê o vector_db
+    # correto, independentemente da thread.
     _vector_db = st.session_state.vector_db
 
     @tool
     def buscar_no_documento(pergunta: str) -> str:
-        """Searches the uploaded document to answer the user's question. Always cite the source."""
+        """Busca no documento para responder à pergunta do usuário. Sempre cita a fonte."""
 
-        # `.as_retriever(...)`
-        # Converts the FAISS vector store into a searchable retriever that
-        # LangChain can plug directly into the agent workflow.
-
-        # search_kwargs={"k": 3}
-        # k=1 → only top-1 chunk (fast, but might miss context)
-        # k=3 → top-3 chunks (sweet spot: enough context, not too noisy)
-        # k=10 → too many chunks (overwhelms the LLM with irrelevant text)
+        # as_retriever: converte o índice FAISS em um buscador que o
+        # LangChain pode plugar diretamente no workflow do agente.
+        # k=3: retorna os 3 trechos mais similares à pergunta.
+        # k=1 seria rápido mas poderia perder contexto; k=10 seria
+        # barulhento demais (muitos trechos irrelevantes para o LLM).
         retriever = _vector_db.as_retriever(search_kwargs={"k": 3})
 
         docs_encontrados = retriever.invoke(pergunta)
@@ -787,90 +787,72 @@ if st.session_state.vector_db is not None:
 
         resultado = ""
 
-        # enumerate(..., start=1) → gives index starting at 1 (not 0)
-        # doc.metadata → dict with info about the chunk source:
-        #   'source' → file name/path
-        #   'page'   → page number (PDFs)
-        #   'row'    → row number (CSVs)
+        # Monta a string de resultado com metadados de cada trecho:
+        # - source: nome do arquivo de origem
+        # - page: número da página (PDFs)
+        # - row: número da linha (CSVs)
+        # get() com fallback: se a chave não existir, usa o valor padrão.
         for i, doc in enumerate(docs_encontrados, start=1):
-            fonte  = doc.metadata.get('source', 'documento desconhecido')
-            pagina = doc.metadata.get('page', doc.metadata.get('row', 'N/A'))
+            fonte = doc.metadata.get("source", "documento desconhecido")
+            pagina = doc.metadata.get("page", doc.metadata.get("row", "N/A"))
             resultado += f"\n[FONTE {i}: {fonte} — Página/Linha {pagina}]\n{doc.page_content}\n"
 
         return resultado
 
-    # Doubt — How the citation flow works:
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 1. User asks a question                                         │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                               ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 2. LLM reads the system_prompt → sees rule "use the tool"       │
-    # │    (system_prompt in action)                                    │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 3. LLM decides to CALL the `buscar_no_documento` tool           │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 4. The TOOL (Python code) RUNS on the server:                   │
-    # │    - Retrieves documents from FAISS via _vector_db (closure)    │
-    # │    - Reads doc.metadata.get('source')   ← FILE NAME             │
-    # │    - Reads doc.metadata.get('page')     ← PAGE NUMBER           │
-    # │    - Assembles the string: [FONTE 1: file.pdf — Página 2]       │
-    # │    - Returns all this to the LLM                                │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 5. LLM receives the returned text (with the [FONTE N] tags)     │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 6. LLM reads system_prompt again → sees rule 4 "cite the source"│
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 7. LLM writes the final answer INCLUDING the source citation    │
-    # └─────────────────────────────────────────────────────────────────┘
+    agente = create_agent(
+        model=llm, tools=[buscar_no_documento], system_prompt=system_prompt
+    )
 
-    agente = create_agent(model=llm, tools=[buscar_no_documento], system_prompt=system_prompt)
-
-    # ==========================================
-    # 6. CHAT INTERFACE WITH HISTORY
-    # ==========================================
-
-    st.divider() # draws a horizontal line across the page
-    st.subheader("💬 Converse com o documento")
-
-    # Show the entire conversation history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # The `:=` operator assigns the value returned by st.chat_input() to the
-    # variable AND checks if it has a value (not empty). If it does, the code
-    # inside the if block is executed.
+    # ── Input do Chat ──
     if pergunta := st.chat_input("Faça uma pergunta sobre o documento..."):
-        st.session_state.messages.append({"role": "user", "content": pergunta})
+        # Cria a conversa no SQLite na primeira mensagem.
+        # O título é derivado da primeira pergunta (truncado em 60 chars).
+        if st.session_state.conversation_id is None:
+            title = pergunta[:60] + ("…" if len(pergunta) > 60 else "")
+            st.session_state.conversation_id = db.create_conversation(
+                title=title,
+                file_names=list(st.session_state.indexed_files),
+            )
 
-        # Display the user's message immediately, without waiting for the agent to respond
+        # 1. Salva a mensagem do usuário no SQLite + session_state
+        st.session_state.messages.append({"role": "user", "content": pergunta})
+        db.save_message(st.session_state.conversation_id, "user", pergunta)
+
+        # 2. Exibe a mensagem do usuário imediatamente
         with st.chat_message("user"):
             st.markdown(pergunta)
 
+        # 3. Invoca o agente e exibe a resposta
         with st.chat_message("assistant"):
             with st.spinner("Analisando..."):
                 try:
                     resposta = agente.invoke({"messages": st.session_state.messages})
 
-                    # [-1] accesses the last message (the agent's final answer)
-                    resposta_final = resposta['messages'][-1].content
+                    # [-1]: acessa a última mensagem do resultado (a resposta
+                    # final do agente, após todas as chamadas de ferramenta).
+                    resposta_final = resposta["messages"][-1].content
 
                     st.markdown(resposta_final)
 
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-
+                    # 4. Salva a resposta do assistente no SQLite + session_state
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": resposta_final}
+                    )
+                    db.save_message(
+                        st.session_state.conversation_id, "assistant", resposta_final
+                    )
                 except Exception as e:
                     st.error(f"Erro ao analisar documento: {e}")
+
 else:
-    st.info("⬆️ Faça o upload de um documento para começar a conversar.")
+    # Sem vector_db: mostra mensagem apropriada conforme o contexto
+    if st.session_state.messages:
+        st.warning(
+            "⚠️ O documento desta conversa não está mais indexado. "
+            "Carregue o documento novamente para fazer novas perguntas."
+        )
+    else:
+        st.info(
+            "⬆️ Faça o upload de um documento ou selecione um documento de teste "
+            "na barra lateral para começar."
+        )
