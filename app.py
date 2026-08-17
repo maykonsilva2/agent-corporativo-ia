@@ -1,28 +1,45 @@
+from logging import exception
 import os
+import csv # Used to detect the delimiter of CSV files (in this case, the delimiter of CSV files)
+import re
 import tempfile # Used to create temporary files (In this case, the temporary files for the Large Language Models (LLMs) to process.)
-from pydantic.v1 import tools
+
+from pandas.core.ops import invalid
 import streamlit as st
 from dotenv import load_dotenv # Used to load environment variables from .env file (in this case, the API key for the LLMs)
 from pydantic import SecretStr # Used to hide sensitive information (in this case, the API key for the LLMs)
 
-from langchain_core.tools import retriever, tool
+from langchain_core.tools import tool
 from langchain_core.caches import InMemoryCache # Used to cache the responses of the LLMs(in this case, the responses of the LLMs in the memory)
 from langchain_core.globals import set_llm_cache # Used to set the cache for the LLMs(in this case, the cache for the responses of the LLMs)
 
 from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, CSVLoader, Docx2txtLoader
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter # Used to split the documents into smaller chunks (this is done because the LLMs have a limited context window)
 from langchain_community.vectorstores import FAISS # Can use other vector stores like Chroma, Pinecone, LanceDB, Qdrant, etc.
+
+#  Keep the import that already works in your current project.
+# If you update LangChain someday and it breaks, switch to:
+#   from langgraph.prebuilt import create_react_agent
+#   agente = create_react_agent(model=llm, tools=[buscar_no_documento], prompt=system_prompt)
 from langchain.agents import create_agent
 
+import database as db
 
 load_dotenv()
 
 # ==========================================
-# Read secrets from st.secrets (Streamlit Cloud) OR .env (local)
+# CONSTANTS
+# ==========================================
+ALLOWED_EXTENSIONS = {"pdf","txt","csv","docx"}
+DOCS_DIR = "docs"
+
+
+# ==========================================
 # This makes the same code work in both environments without any changes.
 # ==========================================
 def get_secret(key: str) -> str | None:
@@ -49,6 +66,9 @@ st.set_page_config(
 # InMemoryCache stores data in computer's memory. If you stop your Streamlit app or terminal, the cache is completely wiped.
 set_llm_cache(InMemoryCache()) # It is used to cache the responses of the LLMs(in this case, the responses of the LLMs in the memory)
 
+# Initialize SQLite DB — create tables if they don't exist.
+db.init_db()
+
 # ==========================================
 # 1. LLM Configuration with Fallback
 # LLM: Assembles a list of available models in order of priority.
@@ -60,6 +80,10 @@ set_llm_cache(InMemoryCache()) # It is used to cache the responses of the LLMs(i
 # The `SecretStr()` function is used to securely store and handle sensitive information, such as API keys. It encrypts the key, preventing it from being exposed in plain text in logs or code.
 # ==========================================
 
+# @st.cache_resource ensures that the models are created ONLY ONCE
+# per server session, not on every Streamlit rerun.
+# Without this, every chat interaction would recreate all the models (slow and expensive).
+@st.cache_resource(show_spinner="⏳ Carregando modelos de LLM...")
 def build_available_llms() -> list:
     models = []
 
@@ -120,17 +144,6 @@ llm = available_models[0]
 if len(available_models) > 1:
     llm = llm.with_fallbacks(available_models[1:])
 
-# ==========================================
-# SESSION STATE — Initialize early, before any cache or widget runs.
-# This guarantees these keys always exist regardless of execution order.
-# `st.session_state` is a dictionary-like object that is used to store data that persists across reruns.
-# ==========================================
-if "vector_db" not in st.session_state:
-    st.session_state.vector_db = None # The vector database used for RAG.
-if "messages" not in st.session_state:
-    st.session_state.messages = [] # The list of messages in the chat history.
-if "last_file_name" not in st.session_state:
-    st.session_state.last_file_name = None # The name of the last uploaded file.
 
 # ==========================================
 # EMBEDDINGS — HuggingFace local (free, no API key required)
@@ -144,7 +157,341 @@ def load_embeddings():
 
 embeddings = load_embeddings()
 
+# ==========================================
+# SESSION STATE — Initialize early, before any cache or widget runs.
+# This guarantees these keys always exist regardless of execution order.
+# `st.session_state` is a dictionary-like object that is used to store data that persists across reruns.
+# ==========================================
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = None # The vector database used for RAG.
+if "messages" not in st.session_state:
+    st.session_state.messages = [] # The list of messages in the chat history.
+if "last_file_name" not in st.session_state:
+    st.session_state.last_file_name = None # The name of the last uploaded file.
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None # The id of the current conversation.
 
+# Signature of currently indexed files (ordered tuple).
+# Avoids reprocessing the same files on every Streamlit rerun.
+# E.g., ("faq_suporte.txt", "politica_privacidade.txt")
+if "indexed_files" not in st.session_state:
+    st.session_state.indexed_files = []
+
+# List of filenames currently in the uploader (detect changes).
+if "uploaded_file_names" not in st.session_state:
+    st.session_state.uploaded_file_names = []
+
+# Incremented to force Streamlit to recreate the empty file_uploader. 
+# Streamlit has no "clear uploader" method; the official solution is to change
+# the widget's key, which causes Streamlit to create a new, empty instance.
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
+
+# ==========================================
+# HELPER FUNCTIONS — file validation and loading
+# ==========================================
+
+def is_valid_file(file_name: str) -> bool:
+    """Return True if the file extension is pdf, txt, csv or docx"""
+    return file_name.split(".")[-1].lower() in ALLOWED_EXTENSIONS
+
+def detect_csv_delimiter(file_path: str) -> str:
+
+    """Automatically detects the CSV delimiter (comma vs. semicolon).
+
+    CSV files exported by the Brazilian Portuguese version of Excel use ';' 
+    as the delimiter, whereas the international standard uses ','.
+    LangChain's CSVLoader defaults to ',', so we need to detect the correct one.
+
+    Strategy:
+    1. Attempt to use csv.Sniffer (standard library) for automatic detection.
+    2. If that fails (e.g., the file is too short or ambiguous), count which
+    delimiter appears most frequently.
+    """
+
+    # `r` -> read mode, exist other modes such as `w` -> write mode, `a` -> append mode, etc.
+    # `erros` -> Ignore errors when reading the file (e.g. if the file is not utf-8 encoded, it will ignore the errors and return the result).
+    with open(file_path, mode='r', encoding="utf-8", errors="ignore") as file:
+        sample = file.read(1024) # Read first 1KB of file
+        try:
+            sniffer = csv.Sniffer()
+            dialect = sniffer.sniff(sample, delimiters=",;|\t")
+            return dialect.delimiter
+        except Exception:
+            # If the sniffer fails, we'll count the occurrences of each delimiter.
+            if sample.count(";") > sample.count(","):
+                return ";"
+            return ","
+ 
+ # file_extension: str | None = None ->  This means the second argument is optional. If the code calling this function doesn't pass an extension, it defaults to None.
+def get_loader(file_path: str, file_extension: str | None = None):
+    """Returns the appropriate LangChain loader for the file type.
+
+    For CSVs, it detects the delimiter before creating the CSVLoader.
+    For other types, it uses the corresponding loader from the dictionary.
+    TextLoader is the default fallback for .txt and any unmapped extensions.
+
+    `return loaders.get(file_extension, TextLoader)(file_path)` -> 
+    1. loaders.get(file_extension, TextLoader)
+    This asks the dictionary: "Do you have a tool for this extension?"
+
+    If file_extension is "pdf" ➡️ It returns PyPDFLoader.
+
+    If file_extension is "docx" ➡️ It returns Docx2txtLoader.
+
+    If file_extension is "txt" (or anything else, like "md") ➡️ The dictionary says "I don't have that!", so .get() safely returns the default backup: TextLoader.
+
+    2. Adding (file_path) at the end
+    Right now, step 1 just gave us the Class (the blueprint). We need to actually build the tool by passing the file path into it.
+    So, Python takes the result from step 1 and adds (file_path) to it.
+
+    Examples of what Python actually executes behind the scenes:
+
+    If PDF: PyPDFLoader(file_path)
+    If DOCX: Docx2txtLoader(file_path)
+    If TXT: TextLoader(file_path)
+    """
+
+    if file_extension is None:
+        file_extension = file_path.split(".")[-1].lower()
+
+    if file_extension == "csv":
+        delimiter = detect_csv_delimiter(file_path)
+        return CSVLoader(file_path, csv_args={"delimiter": delimiter})
+    
+    loaders = {"pdf":PyPDFLoader, "docx":Docx2txtLoader}
+    return loaders.get(file_extension, TextLoader)(file_path)
+
+def list_test_document() -> list:
+    """Lists the valid files within the docs/ folder (ordered alphabetically)."""
+
+    # Check if the docs folder exists. If not, return an empty list.
+    if not os.path.isdir(DOCS_DIR):
+        return []
+    
+    return sorted(f for f in os.listdir(DOCS_DIR) if os.path.isfile(os.path.join(DOCS_DIR, f)) and is_valid_file(f))
+
+# ==========================================
+# SIDEBAR CALLBACKS
+# Streamlit executes callbacks BEFORE the script reruns. This allows
+# for safely modifying widget state (e.g., multiselect, file_uploader)
+# without triggering the "StreamlitAPIException: cannot be modified after being
+# instantiated" error. Without callbacks, attempting to change a widget's
+# st.session_state after it has already rendered would cause an error.
+# ==========================================
+
+def new_conversation():
+    """Resets everything and starts a conversation from scratch.
+
+    Increments uploader_key to force Streamlit to recreate the
+    file_uploader as empty (there is no direct API to clear the uploader).
+
+    st.session_state.messages = [] -> Erases the chat bubbles from the screen.
+    st.session_state.conversation_id = None -> Tells the database to create a new row when the user asks their first new question.
+    st.session_state.vector_db = None -> Erases the AI's memory of the old documents.
+    st.session_state.indexed_files = () -> Clears the list of what files are currently loaded.
+    st.session_state.uploaded_file_names = [] -> Forgets the names of the files the user dragged and dropped.
+    st.session_state.uploader_key += 1 -> This is a very clever Streamlit trick. Streamlit does not have a st.file_uploader.clear() command. The only official way to force the file uploader widget to become empty again is to change its key. By adding 1 to the key, Streamlit sees a brand new widget and draws an empty one.  
+    """
+    st.session_state.messages = []
+    st.session_state.conversation_id = None
+    st.session_state.vector_db = None
+    st.session_state.indexed_files = ()
+    st.session_state.uploaded_file_names = []
+    st.session_state.uploader_key += 1
+
+def load_conversation(conversation_id, file_names, available_docs):
+    """
+    Loads a saved conversation from SQLite.
+
+    Automatic document reloading logic:
+    - If the conversation used only test documents (files from the `docs/` folder)
+    and they all still exist, the system automatically reindexes them by selecting
+    them in the multi-select list. The `skip_chat_reset` flag prevents the
+    processing block from clearing the messages just loaded from the database.
+    - If the conversation used user-uploaded files (not located in `docs/`),
+    the `vector_db` cannot be rebuilt—the user must upload the
+    file again. The old messages remain displayed (read-only mode).
+    """
+
+    st.session_state.conversation_id = conversation_id
+    st.session_state.messages = db.get_messages(conversation_id)
+
+    # file_names is a string in database split for `;`
+    # `if file` checks if the string is empty
+    # `if file` is a shortcut for if file != ""
+    files = [file for file in (file_names or "").split(";") if file]
+
+    # `all` function: Takes an iterable (like our list of files)
+    # and returns True only if EVERY single item inside it is True.
+    # In this case, it checks if EVERY file exists in the docs folder.
+    # If even one file is missing, `all()` returns False.
+    if files and all(file in available_docs for file in files):
+        # All files are test documents that still exist → reindex
+        st.session_state.uploaded_file_names = []
+        st.session_state.uploader_key += 1 # clear the uploader
+
+        # Mark the test documents as selected (the multiselect
+        # will read this list from session_state on the next rerun)
+        st.session_state["selected_test_docs"] = files
+        # Flag: the processing block will see that indexed_files has changed
+        # and will reindex. Without skip_chat_reset, it would clear the messages
+        # we just loaded from SQLite. The flag is "consumed" (popped)
+        # in the processing block, so it only applies to a single execution.
+        st.session_state.skip_chat_reset = True
+    else:
+        # Uploaded files (not persisted) → user needs to re-upload
+        st.session_state.vector_db = None
+        st.session_state.indexed_files = ()
+        st.session_state.uploaded_file_names = []
+        st.session_state.uploader_key += 1
+
+def on_upload_change():
+    """Callback fired when the file uploader content changes.
+
+    Runs BEFORE the script reruns (like all on_change callbacks), so it
+    can safely modify st.session_state['selected_test_docs'] — a widget
+    key that CANNOT be modified from the main script body after the
+    st.multiselect has already been instantiated in the sidebar.
+
+    Replicates the original inline logic: only clears the test-docs
+    selection when the set of *valid* uploaded files has actually
+    changed, so re-selecting the same files or removing all uploads
+    does not wipe the selection unnecessarily.
+    """
+    uploader_key = f"uploader_{st.session_state.uploader_key}"
+    uploaded = st.session_state.get(uploader_key) or []
+    valid = [f.name for f in uploaded if is_valid_file(f.name)]
+    if sorted(valid) != sorted(st.session_state.uploaded_file_names):
+        st.session_state.selected_test_docs = []
+
+def delete_conversation(conv_id):
+    """Deletes a conversation from SQLite and resets the chat state."""
+    db.delete_conversation(conv_id)
+    if st.session_state.conversation_id == conv_id:
+        st.session_state.conversation_id = None
+        st.session_state.messages = []
+
+# ==========================================
+# SIDEBAR — history + test documents
+# ==========================================
+
+with st.sidebar:
+    st.header("⚙️ Painel")
+
+    # New conversation Button (uses callback, not inline logic)
+    st.button("➕ Nova conversa", on_click=new_conversation, use_container_width=True)
+
+    st.divider()
+
+    # Test Documents
+    st.subheader("🧪 Documentos de teste")
+    available_docs = list_test_document()
+
+    # If available_docs is not empty -> st.multiselect
+    # If available_docs is empty -> else: st.caption("Nenhum arquivo válido encontrado na pasta docs/.")
+    if available_docs:
+
+        # key="selected_test_docs" -> The widget's identity — its value lives in st.session_state["selected_test_docs"]. This is how the callbacks (new_conversation, load_conversation) can clear it or pre-fill it!
+        
+
+        # disable -> receive bool 
+        # disable=bool(...) -> bool() converts anything into True or False. For lists, the rule is:
+        #     [] (empty list) -> False -> multiselect enabled
+        #     ["relatorio.pdf"] -> True -> multiselect disabled
+
+        #  options = available_docs -> The list of files the user can pick
+        
+
+        st.multiselect(
+            "Selecione arquivos da pasta docs/:",
+            options=available_docs,
+            key="selected_test_docs",
+            disabled=bool(st.session_state.uploaded_file_names),
+        )
+        st.caption("ℹ️ Ao enviar seu próprio arquivo, estas opções são desmarcadas automaticamente.")
+    else:
+        st.caption("Nenhum arquivo válido encontrado na pasta docs/.")
+
+    st.divider()
+
+    # Conversation History
+
+    # conversations = db.list_conversations() -> Goes to SQLite and returns all conversations (newest first), as dictionaries:
+        # [ {"id": 2, "title": "Como cancelar?", "file_names": "faq_suporte.txt", "created_at": "2026-02-09T15:07:45", "message_count": 4}]
+
+    st.subheader("🕘 Histórico de conversas")
+    conversations = db.list_conversations()
+
+    # If conversations is empty -> st.caption("Nenhuma conversa encontrada.")
+    if not conversations:
+        st.caption("Nenhuma conversa salva ainda.")
+    else:
+        for conv in conversations:
+            # Formats the date for disaplay (YYYY-MM-DD HH:MM)
+            # [:16] → cuts the seconds
+            # .replace("T", " ") → swaps T for a space 
+                #  "2026-02-09T15:07"  ->  "2026-02-09 15:07"
+            
+            # created_at -> It is stored in the database
+
+            date_label = conv["created_at"][:16].replace("T"," ")
+            
+            # col1, col2 = st.columns([5,1]) -> Two-column layout Splits the row into two columns with a 5:1 ratio:
+            col1, col2 = st.columns([5,1])
+
+            # ┌──────────────────────────┬────┐
+            # │  col1 (5 parts wide)     │col2│
+            # │  💬 Conversation title   │ 🗑️ │
+            # └──────────────────────────┴────┘
+
+            # col1(big area) -> Te load button
+            # col2(small area) -> The delete button
+
+            # conv['title'][:28] ->  The title, cut at 28 characters (so long titles don't break the layout)
+
+            # key=f"load_{conv['id']}"
+                #  Unique ID for each button: load_1, load_2, load_3... Without this, Streamlit can't tell the buttons apart!
+
+            # args=(...) -> Arguments passed to the callback. This is how load_conversation(conv_id, file_names, available_docs) receives its 3 parameters!
+                # args: callbacks can't receive parameters directly like normal functions. args= is Streamlit's way of "packaging" the values and delivering them when the button is clicked.
+
+            # The tooltip that appears when you hover the mouse (shows date + files)
+
+            # use_container_width=True -> makes the button take the full width of the column.
+            
+
+            with col1:
+                st.button(
+                    f"💬 {conv['title'][:28]}",
+                    key=f"load_{conv['id']}",
+                    on_click=load_conversation,
+                    args=(conv['id'], conv['file_names'], available_docs),
+                    help=f"{date_label} . Arquivos: {conv['file_names'] or 'n/a'}",
+                    use_container_width=True,
+                )
+
+            #  Notice args=(conv["id"],) — with the comma! You already know why: a tuple with ONE element needs the trailing comma. Without it, (conv["id"]) is just a number, not a tuple!
+            with col2:
+                st.button(
+                    "🗑️",
+                    key=f"del_{conv['id']}",
+                    on_click=delete_conversation,
+                    args=(conv['id'],),
+                )
+
+# Retrieves the current selection of test documents from session_state
+# This reads what the user selected in the multiselect, so the rest of the script (the RAG processing block) can use it.
+# Why .get() instead of direct access?
+    # st.session_state["selected_test_docs"]  -> KeyError — app crashes
+    # st.session_state.get("selected_test_docs", [])  -> Returns the default [] — safe
+    # .get(key, default) = "give me the value if it exists; otherwise, give me this backup value". Same pattern as doc.metadata.get("page", "N/A") in your tool function!
+selected_test_docs = st.session_state.get("selected_test_docs", [])
+
+
+
+            
 # ==========================================
 # 2. STREAMLIT INTERFACE
 # This block renders actual visual elements and interactive widgets inside the body of the web page that users see and interact with.
@@ -157,100 +504,266 @@ st.title("🤖 Agente Corporativo IA")
 st.info("""
 **ℹ️ Como usar esta ferramenta:**
 
-1. **Upload:** Carregue um documento da empresa nos formatos `.pdf`, `.txt`, `.csv` ou `.docx` no botão abaixo.
-2. **Processamento:** Aguarde alguns segundos enquanto a IA lê e indexa o conteúdo do arquivo.
-3. **Conversa:** Faça perguntas sobre o documento no campo de chat. 
+1. **Upload:** Carregue um ou mais documentos da empresa (`.pdf`, `.txt`, `.csv` ou `.docx`) — **ou** selecione documentos de teste na barra lateral.
+2. **Processamento:** Aguarde enquanto a IA lê e indexa o conteúdo dos arquivos.
+3. **Conversa:** Clique em **➕ Nova conversa** e faça perguntas sobre os documentos. O histórico é salvo automaticamente.
 
 **Regras do Agente:**
-- As respostas serão baseadas **exclusivamente** no documento enviado.
+- As respostas serão baseadas **exclusivamente** nos documentos selecionados.
 - Sempre citará a fonte da informação (página ou linha).
-- Se a informação não existir no documento, a IA informará que não foi encontrada (não há invenção de respostas).
+- Se a informação não existir no documento, a IA informará que não foi encontrada.
 """)
 
-# This widget is used here in code because first we need a place where the user can upload a document. If there is no such place, the user will not be able to upload a document.
-uploaded_file = st.file_uploader("Escolha um arquivo", type=['pdf', 'txt', 'csv', 'docx'])
+# ── File Uploader (multiple files) ──
+# Dynamic key: when we increment uploader_key in session_state,
+# Streamlit sees a new key and creates a fresh (empty) file_uploader.
+# This is the only way to programmatically "clear" a file_uploader.
 
-# (Session state already initialized above, before embeddings load)
+uploaded_files = st.file_uploader(
+    "Escolha um arquivo ou mais arquivos (PDF, CSV, TXT, DOCX)",
+    type=['pdf', 'txt', 'csv', 'docx'],
+    accept_multiple_files=True,
+    key=f"uploader_{st.session_state.uploader_key}",
+    on_change=on_upload_change,
+)
 
-# (last_file_name already initialized above)
 
 # ==========================================
-# 3. DOCUMENT PROCESSING (RAG)
-# Question about the difference:
-# Use `!=` to compare Values(Strings, Numbers, Lists, Dicts).
-# Use `is not` to compare Objects in Memory(None, True, False)
-# Best Practice in Python (PEP 8 standard), you should always use `is` or `is not` when checking against `None`. It is faster and avoids unexpected behavior.
+# TYPE VALIDATION + NEW UPLOAD DETECTION
 # ==========================================
+valid_upload_names = []
 
-# When the page loads, the st.file_uploader is empty (value is None). This line checks if the user has actually selected a file. If they haven't, the code skips this entire block. If they have, it enters the block.
-if uploaded_file is not None:
-    # Reset when loading a new  file
-    if uploaded_file.name != st.session_state.last_file_name:
+if uploaded_files:
+    for file in uploaded_files:
+        if is_valid_file(file.name):
+            valid_upload_names.append(file.name)
+        else:
+            st.error(f"❌ Arquivo '{file.name}' não suportado. "
+                "Formatos permitidos: **PDF, CSV, TXT, DOCX**."
+            )
+
+    # Detects whether the set of uploaded files has changed since the last run. 
+    # If it has changed, unmarks the test documents and clears the state for reprocessing.
+
+    # sorted() -> Sorts the items in the list in order alphabetically (or numerically if the list contained numbers)
+    # sorted() -> ["a", "c", "b"] becomes ["a", "b", "c"]
+
+    # Why sorted() on both sides? 
+    # Because the user might upload the files in a different order, Sorting guarantees we compare content, not order
+    current_files = sorted(valid_upload_names)
+    previous_files = sorted(st.session_state.uploaded_file_names)
+
+    if current_files != previous_files:
+        # NOTE: selected_test_docs is NOT cleared here. Clearing it from
+        # the main body raises StreamlitAPIException because the
+        # st.multiselect widget (key="selected_test_docs") was already
+        # instantiated in the sidebar above. The clearing is handled by
+        # the on_upload_change() callback attached to the file_uploader,
+        # which runs BEFORE the widget is reinstantiated on the next rerun.
+        st.session_state.uploaded_file_names = valid_upload_names
         st.session_state.vector_db = None # Clears old document memory
+        st.session_state.indexed_files = () # Clears old document memory
         st.session_state.messages = [] # Clears old chat history
-        st.session_state.last_file_name = uploaded_file.name # Rememberes the new file
+        st.session_state.conversation_id = None # Clears old conversation id
 
-    # If the database is None, it means the file hasn't been processed yet. If the database already exists (because the user just sent a chat message, causing a rerun), the code skips the block completely, saving time and API costs.
-    
-    if st.session_state.vector_db is None:
-        # Extract the File Extension
-        # What it does: Splits the file name by . and extracts the last part (e.g., "report.pdf" -> "pdf"), converting it to lowercase.
+# If the uploader is empty, but the memory has files loaded, clear them.
+# The user remove all files, and the uploader is empty, clear them.
+# There are no new documents — the documents are simply gone. This is the read-only mode:
+# The user can still READ the old conversation on screen
+elif st.session_state.uploaded_file_names:
+    st.session_state.uploaded_file_names = [] # Clear old file names
+    st.session_state.vector_db = None # Clears old document memory
+    st.session_state.indexed_files = () # Clears old document memory
 
-        # Question dubt: In Python, [-1] is used to select the last element of a list.When a filename is split by a period using .split('.'), it creates a list of all the parts of the name. Since the file extension always comes after the final period, accessing the index [-1] guarantees you get the actual extension, even if the file name contains multiple periods (e.g., document.backup.v2.pdf).
 
-        file_extension = uploaded_file.name.split('.')[-1].lower()
 
-        # Create a Temporary Disk File
-        # Streamlit keeps uploaded files in RAM (`BytesIO` buffer). However, standard file loaders (like `PyPDFLoader`) require an actual physical file path on your hard drive.
-        # `delete=False`: Stops Python from automatically deleting the temporary file the moment the with block closes, allowing LangChain to open and read it.
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as tmp:
-            tmp.write(uploaded_file.getvalue()) # This line writes the actual contents of the file into the temporary file.
-            tmp_path = tmp.name # This line assigns the file path of the temporary file to the variable 'tmp_pth'.
+# ==========================================
+# DOCUMENT PROCESSING (RAG)
+# Determines which files to index and reprocesses them only when changes occur.
 
-        
-        with st.spinner("Processando o documento..."):
-            # Load and Parse the File
-            # Fallback:  Any other extension defaults to TextLoader
-            # Easy to Extend: Adding support for a new file type (like JSON or Markdown) just requires adding one key-value pair to the loaders dictionary.
-            try:
-                loaders = {'pdf': PyPDFLoader, 'csv': CSVLoader, 'docx': Docx2txtLoader}
 
-                # Is actually doing two steps in one
-                # Finding the Class (The Lookup)
+# Important background: Streamlit runs the whole script again and again
+# This is very important.
+# Every time the user does something, Streamlit reruns the entire app.py.
 
-                # `loaders.get(extensao, TextLoader)` -> It gets the loader class: If extensao is 'pdf', it evaluates to the class `PyPDFLoader`.
-                #  It falls back to a default: .get(key, default) returns TextLoader as a safe fallback if extensao isn't in the dictionary (e.g., for .txt, .py, or .md files).
+# Examples:
+# user clicks a button
+# user selects a file
+# user types a question
+# user presses Enter
+# page refreshes
 
-                # Instantiating the Class (The (tmp_path) Part) -> Once the dictionary resolves to a class (e.g., PyPDFLoader), Python replaces that part of the code and executes it like this: 
-                # If extensao == 'pdf':
-                # loader = PyPDFLoader(tmp_path)
+# So this section must be smart.
+# It must not process the documents every single time.
+# That would be slow and expensive.
 
-                # If extensao is unknown (e.g., 'txt'):
-                # loader = TextLoader(tmp_path)
-                loader = loaders.get(file_extension, TextLoader)(tmp_path)
-                docs = loader.load()
+# ==========================================
 
-                chunks = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200).split_documents(docs)
+# Determine the source of the files: uploads take priority over test docs
 
-                # It converts those chunks into mathematical vectors (using the embeddings model you configured earlier) and stores them in FAISS (a fast vector database).
-                # It saves the FAISS database into st.session_state so it survives future Streamlit reruns.
+# Verify if valid_upload_names is not empty.
+if  valid_upload_names:
+    target_files = tuple(sorted(valid_upload_names))
+    origin = "uploads"
+# If no upload, use selected test documents
+elif selected_test_docs:
+    target_files = tuple(sorted(selected_test_docs))
+    origin = "docs"
+else:
+    target_files = ()
+    origin = None
+
+# Only reprocess if the set of files has changed (compare with indexed_files).
+# Without this check, Streamlit would reprocess everything on every rerun (slow).
+if origin and st.session_state.indexed_files != target_files:
+    # skip_chat_reset: flag set by load_conversation() when reopening a
+    # conversation. If True, we don't clear the messages (we just loaded them
+
+    # This does two things:
+    # - Returns the value of "skip_chat_reset" if it exists.
+    # - Removes it from st.session_state.
+    # - If it does not exist, it returns False.
+    # REMEMBER .pop() removes the item from the dictionary.
+
+
+    # What is skip_chat_reset?
+    # Normally, when the app indexes new documents, it clears the chat
+    skip_reset = st.session_state.pop("skip_chat_reset", False)
+
+    with st.spinner("Processando documento(s)..."):
+        try:
+            # raw_docs is a list.
+            # It will store the raw document objects loaded from the files.
+            # Example:
+            # PDF page objects
+            # CSV row objects
+            # TXT content objects
+            # DOCX content objects
+            # LangChain loaders usually return a list of Document objects.
+            
+            # Each Document has:
+            # page_content
+            # metadata
+            raw_docs = []
+
+            if origin == "uploads":
+                # Uploaded files reside in RAM (BytesIO) → LangChain loaders require
+                # temporary disk files. 
+                # Each file is saved, processed, and deleted individually.
+                for uploaded_file in uploaded_files:
+                    # if file not supported, skip it.
+                    if not is_valid_file(uploaded_file.name):
+                        continue # loop to the next file
+                    
+                    # Get the file extension
+                    ext = uploaded_file.name.split('.')[-1].lower()
+                    
+                    # Create a temporary file
+                    # This is very important.
+                    # tempfile.NamedTemporaryFile
+                    # This creates a temporary file on the computer.
+                    # delete=False
+                    # By default, Python could delete the temporary file automatically when closed.
+                    # Why?
+                    # Because the loader still needs to read the file after this with block closes.
+                    # So the app will delete it manually later.
+
+                    # suffix=f".{ext}"
+                    # This gives the temporary file the correct extension.
+                    # This helps some loaders understand the file type.
+                    # tmp.write(uploaded_file.getvalue())
+                    # This writes the uploaded file bytes into the temporary file.
+
+                    # uploaded_file.getvalue()
+                    # returns the binary content of the uploaded file.
+
+                    # tmp_path = tmp.name
+                    # This saves the temporary file path.
+
+                    # NamedTemporaryFile(delete=False): the file needs
+                    # to exist on disk while the loader reads it. We delete
+                    # it manually in the finally block.
+
+                    # .extend()
+
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
+                        tmp.write(uploaded_file.getvalue())
+                        tmp_path = tmp.name
+                    try:
+                        # Load documents based on extension
+                        # get_loader(tmp_path, ext)
+                        # This function chooses the correct LangChain loader.
+                        
+                        # loader.load()
+                        # This reads the file.
+                        # It returns a list of LangChain Document objects.
+
+                        # raw_docs.extend(...)
+                        # This adds all loaded documents to the raw_docs list. (append() -> add one item and extend() -> add many items) 
+                        loader = get_loader(file_path=tmp_path, file_extension=ext)
+                        raw_docs.extend(loader.load())
+                    
+                    except Exception as e:
+                        st.warning(f"⚠️ Erro ao processar {uploaded_file.name}: {e}")
+                    finally:
+                        # finally: ensures cleanup even if the loader fails. 
+                        # Without this, temporary files would accumulate in /tmp.
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+            
+            # Uploads processing END
+            # Process test documents from docs/ 
+            else:
+                # Test documents are already on disk in the docs/ folder.
+                for test_doc_name in target_files:
+                    # build the file path
+                    # e.g.,
+                    # DOCS_DIR = "docs"
+                    # fname = "faq_suporte.txt"
+                    # result => "docs/faq_suporte.txt"
+                    
+                    file_path = os.path.join(DOCS_DIR, test_doc_name)
+                    try:
+                        loader = get_loader(file_path)
+                        raw_docs.extend(loader.load())
+                    except Exception as e:
+                        st.warning(f"⚠️ Erro ao processar {test_doc_name}: {e}")
+
+            # Chunking
+            if raw_docs:
+                chunks = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200).split_documents(raw_docs)
+                # Creates the FAISS index from all combined chunks. 
+                # FAISS.from_documents converts each chunk into an embedding
+                # vector and stores them in a fast-search structure.
+            
                 st.session_state.vector_db = FAISS.from_documents(chunks, embeddings)
-                st.success(f"✅ Documento '{uploaded_file.name}' processado! {len(chunks)} trechos indexados. ")
-            except Exception as e:
-                st.error(f"Erro ao processar: {e}")
-            finally:
-                # Run to delete the temporary file from your disk after processing finishes, preventing temporary file memory leaks on your machine.
-                os.remove(tmp_path)
+                st.session_state.indexed_files = target_files # Remember which files were indexed
+
+                #This clears the current chat.
+                # It also clears the current SQLite conversation ID.
+                if not skip_reset:
+                    st.session_state.messages = []
+                    st.session_state.conversation_id = None
+
+                st.success(
+                    f"✅ {len(target_files)} arquivo(s) indexado(s) — "
+                    f"{len(chunks)} trechos processados."
+                )
+            else:
+                st.error("Nenhum documento pôde ser processado.")
+        except Exception as e:
+            st.error(f"Erro ao processar o(s) documento(s): {e}")
+
+#  Clear index when nothing is selected
+#  No documents test and no documents upload
+elif origin is None and st.session_state.indexed_files:
+    st.session_state.vector_db = None
+    st.session_state.indexed_files = ()
+    st.info("Indexação removida. Selecione um arquivo para indexar.")
 
 # ==========================================
-# 4. AGENT TOOL (RAG Search) + 5. LEAD AGENT + 6. CHAT INTERFACE
-# NOTE: The tool, agent, and chat interface are all defined together inside
-# this block. This is intentional — the @tool function captures `_vector_db`
-# as a closure variable, avoiding the need to access st.session_state at
-# tool-execution time (which fails when LangGraph runs the tool in a
-# different thread context).
+# 6. AGENT TOOL + AGENTE + INTERFACE DE CHAT
 # ==========================================
-
 system_prompt = """Você é um assistente corporativo especializado em análise de documentos internos.
 Responda SEMPRE em Português do Brasil (pt-BR).
 
@@ -262,28 +775,34 @@ REGRAS OBRIGATÓRIAS:
 5. Jamais invente informações.
 """
 
-if st.session_state.vector_db is not None:
+# Exibe o histórico de mensagens (também em modo somente leitura quando
+# o vector_db não está disponível — ex: conversa recarregada cujo upload
+# foi perdido)
+st.divider()
+st.subheader("💬 Converse com o documento")
 
-    # ─────────────────────────────────────────────────────────────────
-    # Capture vector_db as a local variable (closure).
-    # The @tool function below closes over `_vector_db`, so it works
-    # even when LangGraph/LangChain runs the tool in a different thread
-    # where st.session_state would not be accessible.
-    # ─────────────────────────────────────────────────────────────────
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+if st.session_state.vector_db is not None:
+    # ── Closure: captura vector_db como variável local ──
+    # A função @tool abaixo fecha sobre _vector_db (closure). Isso é
+    # necessário porque o LangGraph pode executar a ferramenta em uma
+    # thread diferente, onde st.session_state não estaria acessível.
+    # Ao capturar como variável local, a ferramenta sempre vê o vector_db
+    # correto, independentemente da thread.
     _vector_db = st.session_state.vector_db
 
     @tool
     def buscar_no_documento(pergunta: str) -> str:
-        """Searches the uploaded document to answer the user's question. Always cite the source."""
+        """Busca no documento para responder à pergunta do usuário. Sempre cita a fonte."""
 
-        # `.as_retriever(...)`
-        # Converts the FAISS vector store into a searchable retriever that
-        # LangChain can plug directly into the agent workflow.
-
-        # search_kwargs={"k": 3}
-        # k=1 → only top-1 chunk (fast, but might miss context)
-        # k=3 → top-3 chunks (sweet spot: enough context, not too noisy)
-        # k=10 → too many chunks (overwhelms the LLM with irrelevant text)
+        # as_retriever: converte o índice FAISS em um buscador que o
+        # LangChain pode plugar diretamente no workflow do agente.
+        # k=3: retorna os 3 trechos mais similares à pergunta.
+        # k=1 seria rápido mas poderia perder contexto; k=10 seria
+        # barulhento demais (muitos trechos irrelevantes para o LLM).
         retriever = _vector_db.as_retriever(search_kwargs={"k": 3})
 
         docs_encontrados = retriever.invoke(pergunta)
@@ -293,90 +812,72 @@ if st.session_state.vector_db is not None:
 
         resultado = ""
 
-        # enumerate(..., start=1) → gives index starting at 1 (not 0)
-        # doc.metadata → dict with info about the chunk source:
-        #   'source' → file name/path
-        #   'page'   → page number (PDFs)
-        #   'row'    → row number (CSVs)
+        # Monta a string de resultado com metadados de cada trecho:
+        # - source: nome do arquivo de origem
+        # - page: número da página (PDFs)
+        # - row: número da linha (CSVs)
+        # get() com fallback: se a chave não existir, usa o valor padrão.
         for i, doc in enumerate(docs_encontrados, start=1):
-            fonte  = doc.metadata.get('source', 'documento desconhecido')
-            pagina = doc.metadata.get('page', doc.metadata.get('row', 'N/A'))
+            fonte = doc.metadata.get("source", "documento desconhecido")
+            pagina = doc.metadata.get("page", doc.metadata.get("row", "N/A"))
             resultado += f"\n[FONTE {i}: {fonte} — Página/Linha {pagina}]\n{doc.page_content}\n"
 
         return resultado
 
-    # Doubt — How the citation flow works:
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 1. User asks a question                                         │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                               ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 2. LLM reads the system_prompt → sees rule "use the tool"       │
-    # │    (system_prompt in action)                                    │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 3. LLM decides to CALL the `buscar_no_documento` tool           │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 4. The TOOL (Python code) RUNS on the server:                   │
-    # │    - Retrieves documents from FAISS via _vector_db (closure)    │
-    # │    - Reads doc.metadata.get('source')   ← FILE NAME             │
-    # │    - Reads doc.metadata.get('page')     ← PAGE NUMBER           │
-    # │    - Assembles the string: [FONTE 1: file.pdf — Página 2]       │
-    # │    - Returns all this to the LLM                                │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 5. LLM receives the returned text (with the [FONTE N] tags)     │
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 6. LLM reads system_prompt again → sees rule 4 "cite the source"│
-    # └─────────────────────────────────────────────────────────────────┘
-    #                              ↓
-    # ┌─────────────────────────────────────────────────────────────────┐
-    # │ 7. LLM writes the final answer INCLUDING the source citation    │
-    # └─────────────────────────────────────────────────────────────────┘
+    agente = create_agent(
+        model=llm, tools=[buscar_no_documento], system_prompt=system_prompt
+    )
 
-    agente = create_agent(model=llm, tools=[buscar_no_documento], system_prompt=system_prompt)
-
-    # ==========================================
-    # 6. CHAT INTERFACE WITH HISTORY
-    # ==========================================
-
-    st.divider() # draws a horizontal line across the page
-    st.subheader("💬 Converse com o documento")
-
-    # Show the entire conversation history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # The `:=` operator assigns the value returned by st.chat_input() to the
-    # variable AND checks if it has a value (not empty). If it does, the code
-    # inside the if block is executed.
+    # ── Input do Chat ──
     if pergunta := st.chat_input("Faça uma pergunta sobre o documento..."):
-        st.session_state.messages.append({"role": "user", "content": pergunta})
+        # Cria a conversa no SQLite na primeira mensagem.
+        # O título é derivado da primeira pergunta (truncado em 60 chars).
+        if st.session_state.conversation_id is None:
+            title = pergunta[:60] + ("…" if len(pergunta) > 60 else "")
+            st.session_state.conversation_id = db.create_conversation(
+                title=title,
+                file_names=list(st.session_state.indexed_files),
+            )
 
-        # Display the user's message immediately, without waiting for the agent to respond
+        # 1. Salva a mensagem do usuário no SQLite + session_state
+        st.session_state.messages.append({"role": "user", "content": pergunta})
+        db.save_message(st.session_state.conversation_id, "user", pergunta)
+
+        # 2. Exibe a mensagem do usuário imediatamente
         with st.chat_message("user"):
             st.markdown(pergunta)
 
+        # 3. Invoca o agente e exibe a resposta
         with st.chat_message("assistant"):
             with st.spinner("Analisando..."):
                 try:
                     resposta = agente.invoke({"messages": st.session_state.messages})
 
-                    # [-1] accesses the last message (the agent's final answer)
-                    resposta_final = resposta['messages'][-1].content
+                    # [-1]: acessa a última mensagem do resultado (a resposta
+                    # final do agente, após todas as chamadas de ferramenta).
+                    resposta_final = resposta["messages"][-1].content
 
                     st.markdown(resposta_final)
 
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-
+                    # 4. Salva a resposta do assistente no SQLite + session_state
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": resposta_final}
+                    )
+                    db.save_message(
+                        st.session_state.conversation_id, "assistant", resposta_final
+                    )
                 except Exception as e:
                     st.error(f"Erro ao analisar documento: {e}")
+
 else:
-    st.info("⬆️ Faça o upload de um documento para começar a conversar.")
+    # Sem vector_db: mostra mensagem apropriada conforme o contexto
+    if st.session_state.messages:
+        st.warning(
+            "⚠️ O documento desta conversa não está mais indexado. "
+            "Carregue o documento novamente para fazer novas perguntas."
+        )
+    else:
+        st.info(
+            "⬆️ Faça o upload de um documento ou selecione um documento de teste "
+            "na barra lateral para começar."
+        )
