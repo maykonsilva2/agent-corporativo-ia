@@ -129,7 +129,7 @@ O sistema utiliza um pipeline de RAG orquestrado pelo LangChain e Streamlit:
 
 1. **Clonar o repositório:**
    ```bash
-   git clone https://github.com/maykonsilva2/agent-corporativo-ia.git
+   git clone https://github.com/SEU_USUARIO/agente-corporativo-ia.git
    cd agent-corporativo-ia
    ```
 
@@ -182,22 +182,21 @@ O app foi projetado para funcionar no [Streamlit Community Cloud](https://stream
 
 ### Passo a Passo do Deploy
 
-1. **Faça o push do código** para um repositório público no GitHub (já feito em `https://github.com/maykonsilva2/agent-corporativo-ia`).
-
+1. **Faça o push do código** para um repositório público no GitHub.
 2. **Acesse** [share.streamlit.io](https://share.streamlit.io) e entre com sua conta GitHub.
 
 3. **Crie um novo app:**
-   - **Repositório**: `maykonsilva2/agent-corporativo-ia`
-   - **Branch**: `main`
-   - **Caminho do arquivo principal**: `app.py`
+   - **Repositório**: `link do repositorio público no github`
+   - **Branch**: `nome da branch`
+   - **Caminho do arquivo principal**: `nome do arquivo principal da aplicacao`
 
 4. **Configure os Secrets (chaves de API):**
    - Clique em **Settings ⚙️** → **Secrets**
    - Cole suas chaves no formato **TOML** (sem arquivo `.env` no Cloud):
      ```toml
-     OPENROUTER_API_KEY = "sk-or-v1-..."
-     GROQ_API_KEY = "gsk_..."
-     GEMINI_API_KEY = "AIza..."
+     OPENROUTER_API_KEY = "sua_chave_key"
+     GROQ_API_KEY = "sua_chave_key"
+     GEMINI_API_KEY = "sua_chave_key"
      ```
    - Pelo menos **uma** chave é obrigatória; as demais funcionam como fallback automático.
 

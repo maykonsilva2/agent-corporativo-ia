@@ -129,7 +129,7 @@ The system utilizes a modular RAG (Retrieval-Augmented Generation) pipeline orch
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/maykonsilva2/agent-corporativo-ia.git
+   git clone https://github.com/YOUR_USERNAME/agente-corporativo-ia.git
    cd agent-corporativo-ia
    ```
 
@@ -182,23 +182,23 @@ The app is designed to work on [Streamlit Community Cloud](https://streamlit.io/
 
 ### Step-by-Step Deployment
 
-1. **Push your code** to a public GitHub repository (already done at `https://github.com/maykonsilva2/agent-corporativo-ia`).
+1. **Push your code** to a public GitHub repository.
 
 2. **Go to** [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
 
 3. **Create a new app:**
-   - **Repository**: `maykonsilva2/agent-corporativo-ia`
-   - **Branch**: `main`
-   - **Main file path**: `app.py`
+   - **Repository**: `link to your public GitHub repository`
+   - **Branch**: `branch name`
+   - **Main file path**: `main application file name`
 
 4. **Configure Secrets (API keys):**
    - Click **Settings ⚙️** → **Secrets**
    - Paste your keys in **TOML format** (no `.env` file on Cloud):
-     ```toml
-     OPENROUTER_API_KEY = "sk-or-v1-..."
-     GROQ_API_KEY = "gsk_..."
-     GEMINI_API_KEY = "AIza..."
-     ```
+      ```toml
+      OPENROUTER_API_KEY = "your_api_key"
+      GROQ_API_KEY = "your_api_key"
+      GEMINI_API_KEY = "your_api_key"
+      ```
    - At least **one** key is required; the rest serve as automatic fallbacks.
 
 5. **Click Deploy.** The first deployment downloads the HuggingFace embedding model (~90 MB), so it may take a few minutes to start.
