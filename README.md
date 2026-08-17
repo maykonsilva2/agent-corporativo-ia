@@ -25,6 +25,25 @@
 
 ---
 
+## Screenshots
+
+### 1. Initial Screen
+![Initial Screen](imagens_deploy/01_initial_screen.png)
+
+### 2. Selecting Test Documents from the Sidebar
+![Select Test Docs](imagens_deploy/02_select_docs_test.png)
+
+### 3. Uploading Multiple Documents
+![Upload Multiple Docs](imagens_deploy/03_upload_multi_docs.png)
+
+### 4. Asking a Question and Getting a Cited Answer
+![Question and Answer](imagens_deploy/04_test_pergunta.png)
+
+### 5. Conversation History in the Sidebar
+![Conversation History](imagens_deploy/05_test_historico_conversas.png)
+
+---
+
 ## Architecture
 
 The system utilizes a modular RAG (Retrieval-Augmented Generation) pipeline orchestrated by LangChain and Streamlit:

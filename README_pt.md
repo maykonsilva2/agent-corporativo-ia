@@ -25,6 +25,25 @@ O **Agente Corporativo IA** é um assistente inteligente baseado em RAG (Geraç�
 
 ---
 
+## Capturas de Tela
+
+### 1. Tela Inicial
+![Tela Inicial](imagens_deploy/01_initial_screen.png)
+
+### 2. Selecionando Documentos de Teste na Sidebar
+![Selecionar Docs de Teste](imagens_deploy/02_select_docs_test.png)
+
+### 3. Upload de Múltiplos Documentos
+![Upload Múltiplos Docs](imagens_deploy/03_upload_multi_docs.png)
+
+### 4. Fazendo uma Pergunta e Recebendo a Resposta com Citação de Fonte
+![Pergunta e Resposta](imagens_deploy/04_test_pergunta.png)
+
+### 5. Histórico de Conversas na Sidebar
+![Histórico de Conversas](imagens_deploy/05_test_historico_conversas.png)
+
+---
+
 ## Arquitetura
 
 O sistema utiliza um pipeline de RAG orquestrado pelo LangChain e Streamlit:
