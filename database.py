@@ -132,7 +132,7 @@ def get_messages(conversation_id: int) -> list:
     conn = _get_connection()
     rows = conn.execute(
         """
-            SELECT role, content FROM WHERE conversation_id = ?
+            SELECT role, content FROM messages WHERE conversation_id = ?
             ORDER BY id ASC
         """, (conversation_id,),
     ).fetchall()

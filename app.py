@@ -347,6 +347,25 @@ def load_conversation(conversation_id, file_names, available_docs):
         st.session_state.uploaded_file_names = []
         st.session_state.uploader_key += 1
 
+def on_upload_change():
+    """Callback fired when the file uploader content changes.
+
+    Runs BEFORE the script reruns (like all on_change callbacks), so it
+    can safely modify st.session_state['selected_test_docs'] — a widget
+    key that CANNOT be modified from the main script body after the
+    st.multiselect has already been instantiated in the sidebar.
+
+    Replicates the original inline logic: only clears the test-docs
+    selection when the set of *valid* uploaded files has actually
+    changed, so re-selecting the same files or removing all uploads
+    does not wipe the selection unnecessarily.
+    """
+    uploader_key = f"uploader_{st.session_state.uploader_key}"
+    uploaded = st.session_state.get(uploader_key) or []
+    valid = [f.name for f in uploaded if is_valid_file(f.name)]
+    if sorted(valid) != sorted(st.session_state.uploaded_file_names):
+        st.session_state.selected_test_docs = []
+
 def delete_conversation(conv_id):
     """Deletes a conversation from SQLite and resets the chat state."""
     db.delete_conversation(conv_id)
@@ -505,6 +524,7 @@ uploaded_files = st.file_uploader(
     type=['pdf', 'txt', 'csv', 'docx'],
     accept_multiple_files=True,
     key=f"uploader_{st.session_state.uploader_key}",
+    on_change=on_upload_change,
 )
 
 
@@ -534,7 +554,12 @@ if uploaded_files:
     previous_files = sorted(st.session_state.uploaded_file_names)
 
     if current_files != previous_files:
-        st.session_state.selected_test_docs = [] # Deselects test docs
+        # NOTE: selected_test_docs is NOT cleared here. Clearing it from
+        # the main body raises StreamlitAPIException because the
+        # st.multiselect widget (key="selected_test_docs") was already
+        # instantiated in the sidebar above. The clearing is handled by
+        # the on_upload_change() callback attached to the file_uploader,
+        # which runs BEFORE the widget is reinstantiated on the next rerun.
         st.session_state.uploaded_file_names = valid_upload_names
         st.session_state.vector_db = None # Clears old document memory
         st.session_state.indexed_files = () # Clears old document memory

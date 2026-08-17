@@ -46,6 +46,7 @@ chat_history.db
 guia_repositorio_agente_corporativo.md
 sugestoes-de-codigos-de-IA.md
 guia-implementacao-feature.md
+erros_durante_test.md
 
 # Config to fix Python Interpreter not work in Antigravity IDE
 .vscode
