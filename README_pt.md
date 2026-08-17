@@ -16,9 +16,9 @@ O **Agente Corporativo IA** é um assistente inteligente baseado em RAG (Geraç�
 - 📄 **Suporte Multiformato**: Leitura nativa de arquivos PDF, Texto simples, CSV e DOCX — um ou vários de uma vez.
 - 🎯 **Aderência Estrita ao Contexto**: Responde exclusivamente com base nos documentos fornecidos, eliminando alucinações.
 - 📍 **Citação de Fonte**: Cita automaticamente a página ou linha exata de onde a informação foi extraída.
-- ⚡ **Arquitetura Multi-LLM com Fallback**: Alterna automaticamente entre OpenRouter (GPT-4o mini), Groq (modelos GPT-OSS) e Google Gemini (Gemini 3.6 Flash) para garantir alta disponibilidade e menor custo.
+- ⚡ **Arquitetura Multi-LLM com Fallback**: Alterna automaticamente entre OpenRouter (GPT-4o mini), Groq (modelos GPT-OSS) para garantir alta disponibilidade e menor custo.
 - 💬 **Histórico Persistente (SQLite)**: Conversas e mensagens são salvas em um banco SQLite local (`chat_history.db`). Atualizar a página ou reabrir uma conversa restaura o histórico completo.
-- 🕘 **Histórico de Conversas na Sidebar**: Lista conversas anteriores com botões carregar/deletar. Reabrir uma conversa que usou documentos de teste reindexa-os automaticamente.
+- 🕘 **Histórico de Conversas na Sidebar**: Lista conversas anteriores com botões carregar/deletar. Reabrir uma conversa que usou documentos de teste reindexa-os automaticamente documentos enviados pelo usuário devem ser reindexados novamente na conversa.
 - 🧪 **Documentos de Teste**: Arquivos de exemplo na pasta `docs/` podem ser selecionados pela sidebar — não é preciso fazer upload para experimentar o app.
 - 🔍 **Detecção Automática de Delimitador CSV**: Usa `csv.Sniffer` para lidar com `,` (padrão internacional) e `;` (Excel pt-BR) automaticamente.
 - ⚡ **Cache de Respostas LLM**: `InMemoryCache` evita chamadas redundantes ao LLM para prompts idênticos.
@@ -41,6 +41,73 @@ O **Agente Corporativo IA** é um assistente inteligente baseado em RAG (Geraç�
 
 ### 5. Histórico de Conversas na Sidebar
 ![Histórico de Conversas](imagens_deploy/05_test_historico_conversas.png)
+
+---
+## Exemplos de Perguntas
+
+Com base nos documentos demonstrativos da pasta [`docs/`](docs/):
+
+1. **FAQ / Cadastro de Conta** (`docs/faq_suporte.txt`):
+   > *"Como faço para criar uma conta na Nexolve e quanto tempo dura o período de testes?"*
+
+2. **Planos e Preços** (`docs/planos_preços.csv`):
+   > *"Quais são os limites e o valor do plano Business em comparação ao plano Pro?"*
+
+3. **Pergunta Fora do Escopo** (Teste de prevenção a alucinações):
+   > *"Qual é a fórmula de cálculo para o bônus anual de desempenho dos funcionários?"*
+
+---
+
+## Exemplos de Respostas
+
+### Resposta à Pergunta 1:
+**Usuário:** *"Como faço para criar uma conta na Nexolve e quanto tempo dura o período de testes?"*
+**Agente:**
+> Para criar uma conta na Nexolve:
+> 1. Acesse https://app.nexolve.com.br.
+> 2. Clique em "Criar conta".
+> 3. Preencha o formulário com nome, e-mail corporativo e senha.
+> 4. Insira o código de confirmação recebido por e-mail.
+>
+> Após a confirmação, sua conta estará ativa no plano Free com **14 dias de trial do plano Pro** (sem necessidade de cartão de crédito).
+>
+> **Fonte:** Linhas 16 a 24 do documento `docs/faq_suporte.txt`.
+
+---
+
+### Resposta à Pergunta 2:
+**Usuário:** *"Quais são os limites e o valor do plano Business em comparação ao plano Pro?"*
+**Agente:**
+> Com base na tabela de preços:
+> - **Plano Pro:** Custa **R$ 89/usuário/mês**, inclui **10 usuários**, **50 GB de armazenamento**, **10.000 requisições de API por dia**, 15 integrações e SLA de 99,5% de uptime.
+> - **Plano Business:** Custa **R$ 249/usuário/mês**, inclui **25 usuários**, **250 GB de armazenamento**, **100.000 requisições de API por dia**, 30 integrações e SLA de 99,9% de uptime.
+>
+> **Fonte:** Linha 3 (Pro) e Linha 4 (Business) do documento `docs/planos_preços.csv`.
+
+---
+
+### Resposta à Pergunta 3 (Fora do Escopo):
+**Usuário:** *"Qual é a fórmula de cálculo para o bônus anual de desempenho dos funcionários?"*
+**Agente:**
+> A informação solicitada não consta no documento fornecido.
+>
+> **Fonte:** Busca realizada no documento via `buscar_no_documento`.
+
+
+---
+
+## Tecnologias Utilizadas
+
+- **Linguagem**: Python 3.10+
+- **Interface Web**: [Streamlit](https://streamlit.io/)
+- **Orquestração de IA**: [LangChain](https://www.langchain.com/) / [LangChain Core](https://python.langchain.com/)
+- **Banco Vetorial**: [FAISS (Facebook AI Similarity Search)](https://github.com/facebookresearch/faiss)
+- **Embeddings**: [HuggingFace Embeddings](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (`all-MiniLM-L6-v2`) — local, gratuito, sem chave de API
+- **Persistência**: `sqlite3` (built-in do Python) para histórico de chat — sem banco externo
+- **Integração com LLMs** (pelo menos uma obrigatória; as demais são fallback automático):
+  - [OpenRouter](https://openrouter.ai/) (`openai/gpt-4o-mini`) — Modelo Principal
+  - [Groq](https://groq.com/) (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`) — Fallback de Alta Velocidade
+- **Manipulação de Arquivos**: `pypdf`, `docx2txt`, `python-dotenv`
 
 ---
 
@@ -92,13 +159,13 @@ O sistema utiliza um pipeline de RAG orquestrado pelo LangChain e Streamlit:
                   | Agente React LangChain|
                   +-----------+-----------+
                               |
-            +-----------------+-----------------+
-            |                 |                 |
-            v                 v                 v
-     +--------------+  +--------------+  +--------------+
-     | OpenRouter   |  | Groq         |  | Google Gemini|
-     | (Principal)  |->| (Fallback 1) |->| (Fallback 2) |
-     +--------------+  +--------------+  +--------------+
+            +-----------------+
+            |                 |
+            v                 v                
+     +--------------+  +--------------+  
+     | OpenRouter   |  | Groq         |
+     | (Principal)  |->| (Fallback 1) |
+     +--------------+  +--------------+
                               |
                               v
                   +-----------------------+
@@ -121,22 +188,6 @@ O sistema utiliza um pipeline de RAG orquestrado pelo LangChain e Streamlit:
 
 ---
 
-## Tecnologias Utilizadas
-
-- **Linguagem**: Python 3.10+
-- **Interface Web**: [Streamlit](https://streamlit.io/)
-- **Orquestração de IA**: [LangChain](https://www.langchain.com/) / [LangChain Core](https://python.langchain.com/)
-- **Banco Vetorial**: [FAISS (Facebook AI Similarity Search)](https://github.com/facebookresearch/faiss)
-- **Embeddings**: [HuggingFace Embeddings](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (`all-MiniLM-L6-v2`) — local, gratuito, sem chave de API
-- **Persistência**: `sqlite3` (built-in do Python) para histórico de chat — sem banco externo
-- **Integração com LLMs** (pelo menos uma obrigatória; as demais são fallback automático):
-  - [OpenRouter](https://openrouter.ai/) (`openai/gpt-4o-mini`) — Modelo Principal
-  - [Groq](https://groq.com/) (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`) — Fallback de Alta Velocidade
-  - [Google Generative AI](https://ai.google.dev/) (`gemini-3.6-flash`) — Fallback de Segurança
-- **Manipulação de Arquivos**: `pypdf`, `docx2txt`, `python-dotenv`
-
----
-
 ## Instruções de Instalação (Local)
 
 ### Pré-requisitos
@@ -148,7 +199,7 @@ O sistema utiliza um pipeline de RAG orquestrado pelo LangChain e Streamlit:
 
 1. **Clonar o repositório:**
    ```bash
-   git clone https://github.com/SEU_USUARIO/agente-corporativo-ia.git
+   git clone https://github.com/maykonsilva2/agent-corporativo-ia.git
    cd agent-corporativo-ia
    ```
 
@@ -189,7 +240,7 @@ O sistema utiliza um pipeline de RAG orquestrado pelo LangChain e Streamlit:
    ```bash
    streamlit run app.py
    ```
-   A aplicação será aberta no navegador em `http://localhost:8501`.
+   A aplicação será aberta no navegador em uma porta local.
 
    Na primeira execução, o modelo de embeddings da HuggingFace (~90 MB) é baixado automaticamente e fica em cache para as próximas execuções.
 
@@ -221,73 +272,3 @@ O app foi projetado para funcionar no [Streamlit Community Cloud](https://stream
 
 5. **Clique em Deploy.** O primeiro deploy baixa o modelo de embeddings da HuggingFace (~90 MB), então pode levar alguns minutos para iniciar.
 
-### Como os Secrets Funcionam no Streamlit Cloud
-
-| Desenvolvimento local | Streamlit Cloud |
-|---|---|
-| Arquivo `.env` carregado por `python-dotenv` | `st.secrets` configurado no dashboard |
-| `os.environ` | `st.secrets` (formato TOML) |
-| Ambos lidos por `get_secret()` em `app.py:45` | Ambos lidos por `get_secret()` em `app.py:45` |
-
-A função `get_secret()` lida com ambos os ambientes de forma transparente:
-```python
-def get_secret(key: str) -> str | None:
-    try:
-        return st.secrets[key]       # Streamlit Cloud
-    except (KeyError, FileNotFoundError):
-        return os.getenv(key)        # .env local
-```
-
-> ⚠️ **Nunca faça commit do arquivo `.env`.** Ele está listado no `.gitignore`. No Streamlit Cloud, os secrets são criptografados e armazenados separadamente do repositório.
-
----
-
-## Exemplos de Perguntas
-
-Com base nos documentos demonstrativos da pasta [`docs/`](docs/):
-
-1. **FAQ / Cadastro de Conta** (`docs/faq_suporte.txt`):
-   > *"Como faço para criar uma conta na Nexolve e quanto tempo dura o período de testes?"*
-
-2. **Planos e Preços** (`docs/planos_preços.csv`):
-   > *"Quais são os limites e o valor do plano Business em comparação ao plano Pro?"*
-
-3. **Pergunta Fora do Escopo** (Teste de prevenção a alucinações):
-   > *"Qual é a fórmula de cálculo para o bônus anual de desempenho dos funcionários?"*
-
----
-
-## Exemplos de Respostas
-
-### Resposta à Pergunta 1:
-**Usuário:** *"Como faço para criar uma conta na Nexolve e quanto tempo dura o período de testes?"*
-**Agente:**
-> Para criar uma conta na Nexolve:
-> 1. Acesse https://app.nexolve.com.br.
-> 2. Clique em "Criar conta".
-> 3. Preencha o formulário com nome, e-mail corporativo e senha.
-> 4. Insira o código de confirmação recebido por e-mail.
->
-> Após a confirmação, sua conta estará ativa no plano Free com **14 dias de trial do plano Pro** (sem necessidade de cartão de crédito).
->
-> **Fonte:** Linhas 16 a 24 do documento `docs/faq_suporte.txt`.
-
----
-
-### Resposta à Pergunta 2:
-**Usuário:** *"Quais são os limites e o valor do plano Business em comparação ao plano Pro?"*
-**Agente:**
-> Com base na tabela de preços:
-> - **Plano Pro:** Custa **R$ 89/usuário/mês**, inclui **10 usuários**, **50 GB de armazenamento**, **10.000 requisições de API por dia**, 15 integrações e SLA de 99,5% de uptime.
-> - **Plano Business:** Custa **R$ 249/usuário/mês**, inclui **25 usuários**, **250 GB de armazenamento**, **100.000 requisições de API por dia**, 30 integrações e SLA de 99,9% de uptime.
->
-> **Fonte:** Linha 3 (Pro) e Linha 4 (Business) do documento `docs/planos_preços.csv`.
-
----
-
-### Resposta à Pergunta 3 (Fora do Escopo):
-**Usuário:** *"Qual é a fórmula de cálculo para o bônus anual de desempenho dos funcionários?"*
-**Agente:**
-> A informação solicitada não consta no documento fornecido.
->
-> **Fonte:** Busca realizada no documento via `buscar_no_documento`.
